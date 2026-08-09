@@ -15,6 +15,7 @@ const DOT_FOR: Record<string, DotState> = {
   idle: 'warn',
   error: 'err',
   fail: 'err',
+  unverified: 'warn',
   not_configured: 'off',
   planned: 'off',
   off: 'off',

@@ -1,6 +1,7 @@
 import { BrandLogo } from '@/lib/brand-logos';
 import { connectKeysFor, type CatalogEntry } from '@/lib/integrations-catalog';
 import { ConnectFlow } from '@/components/ConnectFlow';
+import { TelegramTest } from '@/components/TelegramTest';
 
 /**
  * One integration tile in the connections marketplace: rounded card, brand
@@ -26,6 +27,9 @@ export function ConnectionCard({ entry, guidance }: { entry: CatalogEntry; guida
         keys={connectKeysFor(entry)}
         guidance={guidance}
       />
+
+      {/* End-to-end proof for a connected Telegram bot: send a real message. */}
+      {entry.slug === 'telegram' && entry.connected && <TelegramTest />}
     </div>
   );
 }

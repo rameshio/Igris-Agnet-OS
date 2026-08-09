@@ -1,9 +1,12 @@
-# Founder OS
+# IGRIS AGENT
 
 **A personal operating system for single-operator business: a live web command
 center that runs your company as a set of AI-assisted "departments."**
 
-Founder OS turns the tabs, tools, and mental overhead of running a solo business
+> IGRIS AGENT is a rebrand of the open-source FounderOS demo
+> ([Bennettxai/FounderOS-DEMO](https://github.com/Bennettxai/FounderOS-DEMO)).
+
+IGRIS AGENT turns the tabs, tools, and mental overhead of running a solo business
 into one screen: unified comms, a client funnel, social growth, finances, a
 knowledge graph, and a roster of named AI agents that each own a real job.
 

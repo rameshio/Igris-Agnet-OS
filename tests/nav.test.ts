@@ -14,8 +14,8 @@ describe('shared nav config', () => {
     expect(NAV_AGENTS.map((n) => n.href)).toEqual(['/agents', '/tasks', '/skills', '/org']);
   });
 
-  test('Intelligence group holds G-Brain', () => {
-    expect(NAV_INTELLIGENCE.map((n) => n.href)).toEqual(['/brain']);
+  test('Intelligence group holds G-Brain, Flows, and Models', () => {
+    expect(NAV_INTELLIGENCE.map((n) => n.href)).toEqual(['/brain', '/flows', '/models']);
   });
 
   test('Finances lives in Operate; Agents, Org Chart, and G-Brain moved to their own groups', () => {

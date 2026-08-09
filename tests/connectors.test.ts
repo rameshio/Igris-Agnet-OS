@@ -85,10 +85,10 @@ describe('metaAdsStatus', () => {
     expect(status.detail).toMatch(/META_ADS_ACCESS_TOKEN/);
   });
 
-  test('reports connected once META_ADS_ACCESS_TOKEN is set', async () => {
+  test('reports unverified once META_ADS_ACCESS_TOKEN is set — saved, but never a fake connected', async () => {
     vi.stubEnv('META_ADS_ACCESS_TOKEN', 'EAAG-test-token');
     const status = await metaAdsStatus();
-    expect(status.state).toBe('connected');
+    expect(status.state).toBe('unverified');
   });
 });
 
@@ -103,7 +103,7 @@ describe('ghlStatus', () => {
     expect((await ghlStatus()).state).toBe('not_configured');
     vi.stubEnv('GHL_LOCATION_ID', 'loc_123');
     const status = await ghlStatus();
-    expect(status.state).toBe('connected');
+    expect(status.state).toBe('unverified'); // saved, not yet verified — never a fake connected
     expect(status.id).toBe('ghl');
     expect(status.kind).toBe('crm');
   });

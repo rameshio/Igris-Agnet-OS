@@ -11,6 +11,25 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+// Friendly labels for the raw env-var names the connect form collects, so a
+// tile reads "Email address" / "Bot token" instead of INBOX_1_USER. Falls back
+// to the key name for anything not listed.
+const FIELD_LABELS: Record<string, string> = {
+  INBOX_1_HOST: 'IMAP host (e.g. imap.gmail.com)',
+  INBOX_1_USER: 'Email address',
+  INBOX_1_PASS: 'App password',
+  TELEGRAM_BOT_TOKEN: 'Bot token (from @BotFather)',
+  SLACK_BOT_TOKEN: 'Slack bot token (xoxb-…)',
+  NOTION_API_KEY: 'Notion integration secret',
+  STRIPE_SECRET_KEY: 'Stripe secret key (sk_…)',
+  ATTIO_API_KEY: 'Attio API key',
+  MANYCHAT_API_KEY: 'ManyChat API key',
+  AI_GATEWAY_API_KEY: 'Vercel AI Gateway API key',
+  HERMES_DASH_URL: 'Hermes dashboard URL (https://…)',
+};
+
+const labelFor = (key: string): string => FIELD_LABELS[key] ?? key;
+
 export function ConnectFlow({
   slug,
   connected,
@@ -89,7 +108,7 @@ export function ConnectFlow({
             key={k}
             type="password"
             autoComplete="off"
-            placeholder={k}
+            placeholder={labelFor(k)}
             value={values[k] ?? ''}
             onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
             className="mb-1.5 w-full rounded-md border border-os-border bg-os-surface2 px-2 py-1.5 font-mono text-[10.5px] text-os-text placeholder:text-os-dim focus:border-os-border-strong focus:outline-none"

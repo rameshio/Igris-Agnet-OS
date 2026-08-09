@@ -12,28 +12,21 @@ import { realAgents } from '@/lib/agents/real';
 const KNOWN_AGENTS = new Set(realAgents.map((a) => a.id));
 
 describe('VENTURES', () => {
-  test("Alex's three income sources, each with a distinct color and brain tag", () => {
+  test('three business lines, each with a distinct color and brain tag', () => {
+    // Internal ids stay stable across a rebrand (URLs, funnel schema, saved data).
     expect(VENTURES.map((v) => v.id)).toEqual(['vantage', 'launchpad-cohort', 'brand-deals']);
     expect(new Set(VENTURES.map((v) => v.color)).size).toBe(3);
     expect(new Set(VENTURES.map((v) => v.brainTag)).size).toBe(3);
     for (const v of VENTURES) {
-      expect(v.focus.length).toBeGreaterThan(0); // executive task list
+      expect(v.focus.length).toBeGreaterThan(0);
       expect(v.detail.length).toBeGreaterThan(0);
     }
   });
 
-  test('venture colors match each real brand source', () => {
-    const byId = new Map(VENTURES.map((v) => [v.id, v]));
-    // Vantage — sampled from VANTAGE LOGO (spring green)
-    expect(byId.get('vantage')?.color).toBe('#00ffaa');
-    // Launchpad Cohort — hsl(355 70% 50%) from the live site theme + brand guide
-    expect(byId.get('launchpad-cohort')?.color).toBe('#d9263f');
-  });
-
-  test('the brand-deals venture is presented as Personal Brand, keeping its color', () => {
-    const pb = getVenture('brand-deals');
-    expect(pb?.label).toBe('Personal Brand');
-    expect(pb?.color).toBe('#a3e635');
+  test('venture labels are neutral placeholders, not a specific brand', () => {
+    expect(VENTURES.map((v) => v.label)).toEqual(['Venture One', 'Venture Two', 'Venture Three']);
+    // each keeps a distinct accent colour
+    expect(new Set(VENTURES.map((v) => v.color)).size).toBe(3);
   });
 
   test('venture colors do not collide with life-area colors', () => {
@@ -67,7 +60,7 @@ describe('VENTURES', () => {
 
 describe('lookups', () => {
   test('getVenture resolves by id and returns null for unknowns', () => {
-    expect(getVenture('vantage')?.label).toBe('Vantage');
+    expect(getVenture('vantage')?.label).toBe('Venture One');
     expect(getVenture('nope')).toBeNull();
   });
 

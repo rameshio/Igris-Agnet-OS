@@ -14,8 +14,16 @@ import { ChevronLeft, ChevronRight, Send, X } from 'lucide-react';
 import { SparkIcon } from '@/components/SparkIcon';
 import { ConductorEmblem } from '@/components/ConductorEmblem';
 
-type Turn = { id: string; role: 'user' | 'assistant'; content: string; routedTo?: string };
+type Turn = { id: string; role: 'user' | 'assistant'; content: string; routedTo?: string; ms?: number };
 type ScreenCtx = { title: string; context: string };
+
+/** A confirm-before-run operator action proposed by the Conductor. */
+type ConductorAction =
+  | { kind: 'create_agent'; name: string; instructions: string; departmentId: string }
+  | { kind: 'update_agent'; agentId: string; agentName: string; name?: string; instructions?: string }
+  | { kind: 'delete_agent'; agentId: string; agentName: string }
+  | { kind: 'run_agent'; agentId: string; agentName: string }
+  | { kind: 'run_flow' };
 
 /** Cross-component open signal — the Topbar agent icon fires this. */
 export const CONDUCTOR_OPEN_EVENT = 'conductor:open';
@@ -93,7 +101,23 @@ export function ConductorPanel() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // an operator action awaiting the operator's confirmation (confirm-each mode)
+  const [pending, setPending] = useState<ConductorAction | null>(null);
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0); // live seconds while the brain is thinking
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // tick a live timer whenever a request is in flight
+  useEffect(() => {
+    if (!sending) return;
+    const start = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((Date.now() - start) / 1000), 100);
+    return () => clearInterval(id);
+  }, [sending]);
+
+  const addAssistant = (content: string) =>
+    setTurns((t) => [...t, { id: `a-${t.length}-${Date.now()}`, role: 'assistant', content, routedTo: 'conductor' }]);
 
   const loadContext = useCallback(async (path: string) => {
     setCtx(null);
@@ -128,6 +152,7 @@ export function ConductorPanel() {
     setError(null);
     setTurns((t) => [...t, { id: `u-${t.length}`, role: 'user', content: text }]);
     setInput('');
+    const startedAt = Date.now();
     try {
       const res = await fetch('/api/agents/conductor/chat', {
         method: 'POST',
@@ -141,12 +166,72 @@ export function ConductorPanel() {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `conductor failed (${res.status})`);
       }
-      const body = (await res.json()) as { routedTo: string; reply: string };
-      setTurns((t) => [...t, { id: `a-${t.length}`, role: 'assistant', content: body.reply, routedTo: body.routedTo }]);
+      const body = (await res.json()) as { routedTo: string; reply: string; action?: ConductorAction };
+      const ms = (Date.now() - startedAt) / 1000;
+      setTurns((t) => [...t, { id: `a-${t.length}`, role: 'assistant', content: body.reply, routedTo: body.routedTo, ms }]);
+      if (body.action) setPending(body.action); // needs the operator's OK before it runs
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);
+    }
+  }
+
+  /** Execute a confirmed action against the existing write endpoints. */
+  async function runAction(a: ConductorAction) {
+    setRunning(true);
+    setError(null);
+    try {
+      if (a.kind === 'create_agent') {
+        const res = await fetch('/api/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: a.name, departmentId: a.departmentId, instructions: a.instructions, tools: [], model: '', enabled: true }),
+        });
+        const j = await res.json().catch(() => null);
+        if (!res.ok || !j?.agent) throw new Error(j?.error ?? 'create failed');
+        addAssistant(`✓ Created agent "${j.agent.name}". It's on /agents and the G-Brain canvas now.`);
+      } else if (a.kind === 'update_agent') {
+        const res = await fetch(`/api/agents/${a.agentId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...(a.name ? { name: a.name } : {}), ...(a.instructions ? { instructions: a.instructions } : {}) }),
+        });
+        const j = await res.json().catch(() => null);
+        if (!res.ok || !j?.agent) throw new Error(j?.error ?? 'update failed');
+        addAssistant(`✓ Updated "${j.agent.name}".`);
+      } else if (a.kind === 'delete_agent') {
+        const res = await fetch(`/api/agents/${a.agentId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('delete failed');
+        addAssistant(`✓ Deleted "${a.agentName}".`);
+      } else if (a.kind === 'run_agent') {
+        addAssistant(`Running ${a.agentName}… ~40s on Hermes.`);
+        const res = await fetch(`/api/agents/${a.agentId}/run`, { method: 'POST' });
+        const j = await res.json().catch(() => null);
+        if (!res.ok || !j?.run) throw new Error(j?.error ?? 'run failed');
+        addAssistant(`✓ ${a.agentName} ran. ${(j.run.output ?? j.run.summary ?? '').toString().slice(0, 200)}`.trim());
+      } else if (a.kind === 'run_flow') {
+        const flowRes = await fetch('/api/agent-flows');
+        const flow = flowRes.ok ? await flowRes.json().catch(() => null) : null;
+        if (!flow?.nodes?.length) throw new Error('no saved flow to run');
+        addAssistant('Running the agent flow… each step is ~40s on Hermes.');
+        const res = await fetch('/api/agent-flows/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nodes: flow.nodes.map((n: { id: string; agentId: string }) => ({ id: n.id, agentId: n.agentId })),
+            edges: (flow.edges ?? []).map((e: { source: string; target: string }) => ({ source: e.source, target: e.target })),
+          }),
+        });
+        const j = await res.json().catch(() => null);
+        if (!res.ok || !Array.isArray(j?.steps)) throw new Error(j?.error ?? 'flow run failed');
+        addAssistant(`✓ Flow complete — ${j.steps.length} step(s). ${j.detail ?? ''}`.trim());
+      }
+    } catch (err) {
+      addAssistant(`⚠ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRunning(false);
+      setPending(null);
     }
   }
 
@@ -270,9 +355,10 @@ export function ConductorPanel() {
               </div>
             ) : (
               <div key={t.id} className="text-left">
-                {t.routedTo && (
-                  <div className="mb-0.5 font-mono text-[9px] uppercase tracking-wider text-os-accent">
-                    → {t.routedTo}
+                {(t.routedTo || t.ms != null) && (
+                  <div className="mb-0.5 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-os-accent">
+                    {t.routedTo && <span>→ {t.routedTo}</span>}
+                    {t.ms != null && <span className="text-os-dim">· {t.ms.toFixed(1)}s</span>}
                   </div>
                 )}
                 <span className="inline-block max-w-[92%] whitespace-pre-wrap break-words rounded-md border border-os-border bg-os-bg px-2.5 py-1.5 text-[11.5px] leading-relaxed text-os-muted">
@@ -284,11 +370,59 @@ export function ConductorPanel() {
           {sending && (
             <div className="flex items-center gap-2">
               <ConductorEmblem size={18} thinking />
-              <span className="font-mono text-[10px] text-os-dim">routing…</span>
+              <span className="font-mono text-[10px] text-os-dim">thinking… {elapsed.toFixed(1)}s</span>
             </div>
           )}
           {error && <p className="font-mono text-[10px] text-os-err">⚠ {error}</p>}
         </div>
+
+        {/* confirm-before-run card for a proposed operator action */}
+        {pending && (
+          <div className="mx-3 mb-2 rounded-md border border-os-border-strong bg-os-bg p-3">
+            <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-os-accent">
+              {pending.kind === 'delete_agent' ? 'Confirm — destructive' : 'Confirm action'}
+            </div>
+            <div className="mt-1 text-[12px] font-bold text-os-text">
+              {pending.kind === 'create_agent' && `Create agent “${pending.name}”`}
+              {pending.kind === 'update_agent' && `Update “${pending.agentName}”`}
+              {pending.kind === 'delete_agent' && `Delete “${pending.agentName}”`}
+              {pending.kind === 'run_agent' && `Run “${pending.agentName}”`}
+              {pending.kind === 'run_flow' && 'Run the agent flow'}
+            </div>
+            {pending.kind === 'create_agent' && (
+              <p className="mt-1 line-clamp-3 font-mono text-[10px] leading-relaxed text-os-muted">{pending.instructions}</p>
+            )}
+            {pending.kind === 'update_agent' && (
+              <p className="mt-1 font-mono text-[10px] leading-relaxed text-os-muted">
+                {pending.name ? `New name: ${pending.name}. ` : ''}
+                {pending.instructions ? `New instructions: ${pending.instructions.slice(0, 140)}…` : ''}
+              </p>
+            )}
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={() => runAction(pending)}
+                disabled={running}
+                className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] font-semibold transition-opacity disabled:opacity-50 ${
+                  pending.kind === 'delete_agent'
+                    ? 'border-os-err bg-os-err text-os-bg'
+                    : 'border-os-border-bright bg-os-text text-os-bg'
+                }`}
+              >
+                {running ? 'Working…' : pending.kind === 'delete_agent' ? 'Confirm delete' : 'Confirm'}
+              </button>
+              <button
+                onClick={() => {
+                  setPending(null);
+                  addAssistant('Cancelled.');
+                }}
+                disabled={running}
+                className="rounded-md border border-os-border px-3 py-1.5 text-[11px] font-semibold text-os-muted transition-colors hover:text-os-text disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-1.5 border-t border-os-border p-3">
           <input

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/data';
-import { realAgents } from '@/lib/agents/real';
+import { allRuntimeAgents } from '@/lib/agents/registry';
 import { chatWithAgent } from '@/lib/agents/chat';
 import { routeConductorMessage } from '@/lib/agents/conductor';
 
@@ -23,16 +23,19 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
   // Resolve the target up front so a genuinely-unknown agent is a 404, while a
   // downstream failure (gateway error, Zod throw, …) surfaces honestly as a 500
-  // instead of masquerading as "unknown agent".
+  // instead of masquerading as "unknown agent". The roster includes the
+  // client-created custom agents, so they are chattable too.
+  const db = getDb();
+  const agents = allRuntimeAgents(db);
   const isConductor = params.id === 'conductor';
-  if (!isConductor && !realAgents.some((a) => a.id === params.id)) {
+  if (!isConductor && !agents.some((a) => a.id === params.id)) {
     return NextResponse.json({ error: `unknown agent: ${params.id}` }, { status: 404 });
   }
 
   try {
     const result = isConductor
-      ? await routeConductorMessage(getDb(), realAgents, message, { screenContext })
-      : await chatWithAgent(getDb(), realAgents, params.id, message, { screenContext });
+      ? await routeConductorMessage(db, agents, message, { screenContext })
+      : await chatWithAgent(db, agents, params.id, message, { screenContext });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

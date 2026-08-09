@@ -66,9 +66,9 @@ describe('trakyoStatus', () => {
     expect(status.kind).toBe('crm');
   });
 
-  test('connected once a key is provided', async () => {
+  test('unverified once a key is provided — saved, but never a fake connected', async () => {
     process.env[TK] = 'tk_test';
     const status = await trakyoStatus();
-    expect(status.state).toBe('connected');
+    expect(status.state).toBe('unverified');
   });
 });

@@ -1,7 +1,16 @@
-# FOUNDER OS
+# IGRIS AGENT
 
-Personal OS / AI agent command center. Live web recreation of the FounderOS
-"Conducting AI" board. Runs on port **4100** (command-center owns 4000).
+> **Source of truth for architecture is now the handoff docs.** This file
+> predates Phases A–C and some sections (e.g. the Views list) are out of date —
+> notably `/brain` is now knowledge-only and the workflow orchestrator lives on
+> `/flows`. For current, accurate architecture read, in order: `AGENTS.md`,
+> `docs/AI-HANDOFF.md`, `docs/ARCHITECTURE.md`, `docs/PHASE-STATUS.md`. Where this
+> file and those disagree, **the docs (and the code) win.** The stack, repo-layer
+> rule, theme, and TDD conventions below remain accurate.
+
+Personal OS / AI agent command center (rebrand of the FounderOS demo). Live web
+recreation of the "Conducting AI" board. Runs on port **4100**
+(command-center owns 4000).
 
 ## Commands
 

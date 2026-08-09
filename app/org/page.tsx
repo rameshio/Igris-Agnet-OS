@@ -7,9 +7,34 @@ import { VENTURES, getVenture, ventureAgentSet, venturesForAgent } from '@/lib/v
 import { ConductorCard } from '@/components/ConductorCard';
 import { SparkIcon } from '@/components/SparkIcon';
 import { PageHeader } from '@/components/PageHeader';
-import type { Agent, AgentStatus } from '@/lib/schemas';
+import type { Agent, AgentStatus, CustomAgent } from '@/lib/schemas';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Client-authored agents live in their own `custom_agents` table (pure data),
+ * so the code-defined org roster never sees them. Adapt each one into an
+ * `Agent` so it surfaces on the hierarchy board alongside the built-in crew —
+ * a `lead` instance slot under its department, tagged `custom`. This is what
+ * keeps the Agents section in sync: create an agent on /agents and it appears
+ * here too.
+ */
+function customAsAgent(c: CustomAgent): Agent {
+  const job = /your one job:\s*([^.]+)\.?/i.exec(c.instructions)?.[1]?.trim();
+  return {
+    id: c.id,
+    departmentId: c.departmentId,
+    name: c.name,
+    role: (c.description || job || 'Custom agent').slice(0, 80),
+    status: c.enabled ? 'active' : 'idle',
+    tier: 'lead',
+    description: c.description || job || `${c.name} — client-created agent`,
+    model: c.model,
+    tools: c.tools,
+    parentId: null,
+    instance: 'custom',
+  };
+}
 
 const STATUS_DOT: Record<AgentStatus, string> = {
   active: 'bg-os-text',
@@ -85,7 +110,9 @@ function SystemCard({ href, title, caption }: { href: string; title: string; cap
 export default function OrgChartPage({ searchParams }: { searchParams?: { venture?: string } }) {
   const db = getDb();
   const departments = db.departments.all();
-  const agents = db.agents.all();
+  // Built-in code-defined roster + client-authored custom agents, so both show
+  // up on the same board (keeps /agents and /org in sync after a demo clear).
+  const agents = [...db.agents.all(), ...db.customAgents.all().map(customAsAgent)];
   // The venture lens: same roster, same DB — the switcher just changes which
   // crew lights up. No venture param = everything bright.
   const venture = getVenture(searchParams?.venture ?? '');

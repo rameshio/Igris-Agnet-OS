@@ -1,11 +1,15 @@
 /**
- * Alex's three income sources — the venture lens over the OS.
+ * The venture lens over the OS — a client's business lines.
  *
  * One database, one G-Brain, one agent roster: ventures never partition the
  * data. They are saved filters — each one names the agents that serve it per
- * life area, the brain tag that marks its pages, and the current executive
- * focus. Switching venture in the hierarchy or life map swaps which crew
- * lights up; the agents themselves keep full visibility of everything.
+ * life area, the brain tag that marks its pages, and the current focus.
+ * Switching venture in the hierarchy or life map swaps which crew lights up;
+ * the agents themselves keep full visibility of everything.
+ *
+ * These are neutral placeholders — a client renames them (and their focus
+ * lists) to their own business lines. Internal ids stay stable so URLs,
+ * the funnel schema, and saved data keep working across a rename.
  */
 import type { LifeArea } from '@/lib/life-map';
 import { LIFE_AREAS } from '@/lib/life-map';
@@ -18,7 +22,7 @@ export type Venture = {
   detail: string;
   /** Tag that marks this venture's pages inside the single shared G-Brain. */
   brainTag: string;
-  /** Current executive priorities — edit freely, this is Alex's list. */
+  /** Current priorities for this business line — a client edits these freely. */
   focus: string[];
   /** life-area id → the agents working that area FOR this venture. */
   areaAgents: Record<string, string[]>;
@@ -30,16 +34,15 @@ const SHARED_KNOWLEDGE = ['data-agent', 'markdown-auditor', 'vector-auditor'];
 export const VENTURES: Venture[] = [
   {
     id: 'vantage',
-    label: 'Vantage',
-    kind: 'AI agency',
-    // Brand green sampled from VANTAGE LOGO (~/vantage/VANTAGE LOGO).
+    label: 'Venture One',
+    kind: 'Primary business line',
     color: '#00ffaa',
-    detail: 'Client AI builds and delivery — the agency arm.',
+    detail: 'Your primary business line — rename it and set its focus in this file.',
     brainTag: 'vantage',
     focus: [
-      'Active client builds shipped on schedule',
-      'Pipeline: proposals out, deals advanced in Attio',
-      'Delivery quality — every handoff documented in G-Brain',
+      'Active work shipped on schedule',
+      'Pipeline: proposals out, deals advanced',
+      'Delivery quality — every handoff documented',
     ],
     areaAgents: {
       marketing: ['social-agent', 'zernio-publisher', 'remotion-editor', 'higgsfield-creative'],
@@ -52,16 +55,15 @@ export const VENTURES: Venture[] = [
   },
   {
     id: 'launchpad-cohort',
-    label: 'Launchpad Cohort',
-    kind: 'Mentorship program',
-    // Brand crimson — hsl(355 70% 50%) from the live LC site theme + brand guide.
+    label: 'Venture Two',
+    kind: 'Secondary business line',
     color: '#d9263f',
-    detail: 'The mentorship — students, curriculum, community.',
+    detail: 'A second business line — rename it and set its focus in this file.',
     brainTag: 'launchpad-cohort',
     focus: [
-      'Student results — track wins, unblock stuck students fast',
-      'Content + newsletter cadence for enrollment',
-      'Community pulse on WhatsApp; T1 response times hold',
+      'Track outcomes — surface wins, unblock fast',
+      'Content + newsletter cadence for growth',
+      'Community pulse; keep response times tight',
     ],
     areaAgents: {
       marketing: ['social-agent', 'arcads-creative', 'zernio-publisher', 'manychat-mcp', 'remotion-editor'],
@@ -73,17 +75,17 @@ export const VENTURES: Venture[] = [
     },
   },
   {
-    // Internal id/brainTag stay 'brand-deals'; presented as Personal Brand.
+    // Internal id/brainTag stay 'brand-deals'; presented as a third line.
     id: 'brand-deals',
-    label: 'Personal Brand',
-    kind: 'Paid collaborations',
+    label: 'Venture Three',
+    kind: 'Side project / partnerships',
     color: '#a3e635',
-    detail: 'Sponsored collabs with AI companies — personally managed.',
+    detail: 'A third line — partnerships or a side project. Rename it in this file.',
     brainTag: 'brand-deals',
     focus: [
-      'Inbound collab offers triaged and answered',
-      'Deliverables calendar — no missed posting windows',
-      'Invoices out and chased; rates documented per brand',
+      'Inbound offers triaged and answered',
+      'Deliverables calendar — no missed windows',
+      'Invoices out and chased; rates documented',
     ],
     areaAgents: {
       marketing: ['arcads-creative', 'social-agent', 'zernio-publisher', 'higgsfield-creative', 'remotion-editor'],

@@ -13,6 +13,7 @@ import {
   Sparkles,
   Network,
   Brain,
+  Cpu,
   Wallet,
   Filter,
   Workflow,
@@ -21,6 +22,7 @@ import {
   BarChart3,
   LayoutGrid,
   Layers,
+  Settings,
 } from 'lucide-react';
 
 export type NavItem = { href: string; label: string; icon: typeof Home };
@@ -44,13 +46,18 @@ export const NAV_AGENTS: NavItem[] = [
 ];
 
 // The knowledge layer the agents draw on.
-export const NAV_INTELLIGENCE: NavItem[] = [{ href: '/brain', label: 'G-Brain', icon: Brain }];
+export const NAV_INTELLIGENCE: NavItem[] = [
+  { href: '/brain', label: 'G-Brain', icon: Brain },
+  { href: '/flows', label: 'Flows', icon: Workflow },
+  { href: '/models', label: 'Models', icon: Cpu },
+];
 
 export const NAV_SYSTEM: NavItem[] = [
   { href: '/integrations', label: 'Connections', icon: Plug },
   { href: '/roadmap', label: 'Roadmap', icon: Map },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/reference', label: 'Reference Model', icon: LayoutGrid },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 // At the very bottom: persona templates that can run variants of this platform.

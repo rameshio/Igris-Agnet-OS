@@ -57,7 +57,7 @@ export function Sidebar() {
     <aside className="fixed inset-y-0 left-0 z-20 flex w-[232px] flex-col border-r border-os-border bg-os-bg2">
       <div className="flex items-center gap-[11px] px-[18px] pb-[18px] pt-5">
         <div>
-          <div className="text-[13px] font-bold tracking-[0.14em]">FOUNDER OS</div>
+          <div className="text-[13px] font-bold tracking-[0.14em]">IGRIS AGENT</div>
           <div className="mt-[3px] whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.16em] text-os-dim">
             v3 · Operator Mode
           </div>

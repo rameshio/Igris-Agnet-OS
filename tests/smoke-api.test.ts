@@ -22,13 +22,17 @@ const ROUTES: RouteEntry[] = [
   { route: 'agents', load: () => import('@/app/api/agents/route'), url: 'http://localhost/api/agents' },
   { route: 'agents/activity', load: () => import('@/app/api/agents/activity/route'), url: 'http://localhost/api/agents/activity?limit=5' },
   { route: 'agents/broadcast', load: () => import('@/app/api/agents/broadcast/route'), url: 'http://localhost/api/agents/broadcast' },
+  { route: 'agent-flows', load: () => import('@/app/api/agent-flows/route'), url: 'http://localhost/api/agent-flows' },
   { route: 'agents/work', load: () => import('@/app/api/agents/work/route'), url: 'http://localhost/api/agents/work?agentId=data-agent' },
   { route: 'brain', load: () => import('@/app/api/brain/route'), url: 'http://localhost/api/brain' },
+  { route: 'models', load: () => import('@/app/api/models/route'), url: 'http://localhost/api/models' },
+  { route: 'flows', load: () => import('@/app/api/flows/route'), url: 'http://localhost/api/flows' },
   { route: 'brain/graph', load: () => import('@/app/api/brain/graph/route'), url: 'http://localhost/api/brain/graph' },
   { route: 'brain/overview', load: () => import('@/app/api/brain/overview/route'), url: 'http://localhost/api/brain/overview' },
   { route: 'comms', load: () => import('@/app/api/comms/route'), url: 'http://localhost/api/comms' },
   { route: 'conductor/context', load: () => import('@/app/api/conductor/context/route'), url: 'http://localhost/api/conductor/context?path=/agents' },
   { route: 'connections', load: () => import('@/app/api/connections/route'), url: 'http://localhost/api/connections' },
+  { route: 'connections/telegram/test', load: () => import('@/app/api/connections/telegram/test/route'), url: 'http://localhost/api/connections/telegram/test' },
   { route: 'contacts/tags', load: () => import('@/app/api/contacts/tags/route'), url: 'http://localhost/api/contacts/tags' },
   { route: 'departments', load: () => import('@/app/api/departments/route'), url: 'http://localhost/api/departments' },
   { route: 'funnel', load: () => import('@/app/api/funnel/route'), url: 'http://localhost/api/funnel' },
@@ -37,6 +41,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'life/map', load: () => import('@/app/api/life/map/route'), url: 'http://localhost/api/life/map' },
   { route: 'metrics', load: () => import('@/app/api/metrics/route'), url: 'http://localhost/api/metrics' },
   { route: 'roadmap', load: () => import('@/app/api/roadmap/route'), url: 'http://localhost/api/roadmap' },
+  { route: 'settings/brain', load: () => import('@/app/api/settings/brain/route'), url: 'http://localhost/api/settings/brain' },
   { route: 'social', load: () => import('@/app/api/social/route'), url: 'http://localhost/api/social' },
   { route: 'social/[platform]', load: () => import('@/app/api/social/[platform]/route'), url: 'http://localhost/api/social/instagram', params: { platform: 'instagram' } },
   { route: 'social/history', load: () => import('@/app/api/social/history/route'), url: 'http://localhost/api/social/history?limit=6' },
@@ -45,6 +50,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'social/sync', load: () => import('@/app/api/social/sync/route'), url: 'http://localhost/api/social/sync' },
   { route: 'tools', load: () => import('@/app/api/tools/route'), url: 'http://localhost/api/tools' },
   { route: 'ventures', load: () => import('@/app/api/ventures/route'), url: 'http://localhost/api/ventures' },
+  { route: 'workflows', load: () => import('@/app/api/workflows/route'), url: 'http://localhost/api/workflows' },
   { route: 'webhooks/manychat', load: () => import('@/app/api/webhooks/manychat/route'), url: 'http://localhost/api/webhooks/manychat' },
 ];
 
@@ -73,8 +79,10 @@ describe('platform smoke — every GET API route answers 200 with JSON', () => {
 
   test('the API smoke net covers every GET route under app/api (no route escapes)', () => {
     // skills/[slug] reads the local ~/.claude/skills dir at runtime (404 without
-    // a slug on disk), so it is not a 200-required smoke route.
-    const IGNORE = new Set(['skills/[slug]']);
+    // a slug on disk), so it is not a 200-required smoke route. flows/[id] and
+    // flows/[id]/versions likewise 404 without a real workflow id — they are
+    // covered by the dedicated flows repo/route tests instead.
+    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]']);
     const discovered = discoverGetRoutes(path.join(process.cwd(), 'app', 'api')).filter((r) => !IGNORE.has(r)).sort();
     const covered = ROUTES.map((r) => r.route).sort();
     expect(covered).toEqual(discovered);

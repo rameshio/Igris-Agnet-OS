@@ -1,6 +1,7 @@
 import { emailStatus } from '@/lib/connectors/email';
 import { calendarStatus } from '@/lib/connectors/gcal';
 import { slackStatus } from '@/lib/connectors/slack';
+import { telegramStatus } from '@/lib/connectors/telegram';
 import { paymentsStatus } from '@/lib/connectors/payments';
 import { notionStatus } from '@/lib/connectors/notion';
 import { zernioStatus } from '@/lib/connectors/zernio';
@@ -64,6 +65,7 @@ const CHECKS: [string, ConnectorStatus['kind'], () => Promise<ConnectorStatus>][
   ['email', 'email', () => emailStatus(runtimeEnv())],
   ['calendar', 'calendar', calendarStatus],
   ['slack', 'slack', () => slackStatus(runtimeEnv())],
+  ['telegram', 'social', () => telegramStatus(runtimeEnv())],
   ['payments', 'payments', () => paymentsStatus(runtimeEnv())],
   ['notion', 'notion', () => notionStatus(runtimeEnv())],
 ];

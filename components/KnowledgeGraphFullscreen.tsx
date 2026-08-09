@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight, Minimize2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Minimize2, Plus, Minus, Maximize } from 'lucide-react';
+
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2.5;
+const ZOOM_STEP = 0.2;
+const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
 import type { ToolWiki } from '@/lib/agent-wiki';
 import { ToolDetailCard, type DeptLite } from '@/components/KnowledgeDetail';
 
@@ -36,7 +41,11 @@ export function KnowledgeGraphFullscreen({
   children: React.ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
+  const [zoom, setZoom] = useState(1); // graph magnification in fullscreen
   useEffect(() => setMounted(true), []);
+  const zoomIn = () => setZoom((z) => clampZoom(z + ZOOM_STEP));
+  const zoomOut = () => setZoom((z) => clampZoom(z - ZOOM_STEP));
+  const zoomReset = () => setZoom(1);
   const hasDetail = !!(toolWiki || extraDetail);
   const idx = deptList.findIndex((d) => d.teamId === currentTeamId);
   const step = (dir: number) => {
@@ -56,6 +65,9 @@ export function KnowledgeGraphFullscreen({
         else onClose();
       } else if (e.key === 'ArrowLeft') step(-1);
       else if (e.key === 'ArrowRight') step(1);
+      else if (e.key === '+' || e.key === '=') setZoom((z) => clampZoom(z + ZOOM_STEP));
+      else if (e.key === '-' || e.key === '_') setZoom((z) => clampZoom(z - ZOOM_STEP));
+      else if (e.key === '0') setZoom(1);
     };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
@@ -75,8 +87,21 @@ export function KnowledgeGraphFullscreen({
       {/* the graph fills the field — same view as the inline "demo": every
           department in its spot in the circle, the active one bloomed into its
           tree with its colour glow, the rest dimmed in the background. */}
-      <div className="relative min-w-0 flex-1 overflow-hidden bg-os-surface">
-        {children}
+      <div
+        className="relative min-w-0 flex-1 overflow-hidden bg-os-surface"
+        onWheel={(e) => {
+          // wheel zooms the graph in fullscreen (up = in, down = out)
+          if (e.deltaY === 0) return;
+          setZoom((z) => clampZoom(z + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)));
+        }}
+      >
+        {/* only the graph scales; the overlay controls below stay fixed size */}
+        <div
+          className="h-full w-full origin-center"
+          style={{ transform: `scale(${zoom})`, transition: 'transform 120ms ease-out' }}
+        >
+          {children}
+        </div>
 
         {/* vault search — top-left while the Notes core is open */}
         {searchSlot && <div className="absolute left-5 top-5 z-10">{searchSlot}</div>}
@@ -140,6 +165,45 @@ export function KnowledgeGraphFullscreen({
         >
           <Minimize2 className="h-3.5 w-3.5" /> Exit
         </button>
+
+        {/* zoom controls — top-right, under Exit. Scroll the graph to zoom too. */}
+        <div className="absolute right-5 top-16 z-20 flex items-center gap-0.5 rounded-sm-t border border-os-border bg-os-bg/85 px-1 py-1 backdrop-blur">
+          <button
+            onClick={zoomOut}
+            disabled={zoom <= ZOOM_MIN}
+            aria-label="Zoom out"
+            title="Zoom out"
+            className="grid h-6 w-6 place-items-center text-os-muted transition-colors hover:text-os-text disabled:opacity-30"
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={zoomReset}
+            aria-label="Reset zoom"
+            title="Reset zoom to 100%"
+            className="min-w-[38px] px-1 text-center font-mono text-[10px] text-os-muted transition-colors hover:text-os-text"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={zoomIn}
+            disabled={zoom >= ZOOM_MAX}
+            aria-label="Zoom in"
+            title="Zoom in"
+            className="grid h-6 w-6 place-items-center text-os-muted transition-colors hover:text-os-text disabled:opacity-30"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+          <div className="mx-0.5 h-4 w-px bg-os-border" />
+          <button
+            onClick={zoomReset}
+            aria-label="Fit to view"
+            title="Fit to view (100%)"
+            className="grid h-6 w-6 place-items-center text-os-muted transition-colors hover:text-os-text"
+          >
+            <Maximize className="h-3.5 w-3.5" />
+          </button>
+        </div>
 
         {/* side paddles: slim, hugging the canvas edges at mid-height — you
             turn the wheel from where you're already looking, never the top.

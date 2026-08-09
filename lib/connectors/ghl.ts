@@ -15,14 +15,13 @@ export async function ghlStatus(): Promise<ConnectorStatus> {
     return {
       ...base,
       state: 'not_configured',
-      detail:
-        'Launchpad Cohort pipeline (owner@example.com). Set GHL_API_KEY (Private Integration token) + GHL_LOCATION_ID in .env.local.',
+      detail: 'Set GHL_API_KEY (Private Integration token) + GHL_LOCATION_ID in .env.local.',
     };
   }
   return {
     ...base,
-    state: 'connected',
-    detail: 'Private Integration token present · LC opportunities feed the funnel live.',
+    state: 'unverified',
+    detail: 'Token + location saved — not yet verified (no live GoHighLevel check wired yet).',
     meta: { keyed: 'yes' },
   };
 }

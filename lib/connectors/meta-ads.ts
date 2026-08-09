@@ -16,14 +16,13 @@ export async function metaAdsStatus(): Promise<ConnectorStatus> {
     return {
       ...base,
       state: 'not_configured',
-      detail:
-        'Paid-funnel attribution (ad → opt-in → purchase) for Vantage + Launchpad Cohort. Set META_ADS_ACCESS_TOKEN to wire the Meta Ads MCP.',
+      detail: 'Paid-funnel attribution (ad → opt-in → purchase). Set META_ADS_ACCESS_TOKEN to wire the Meta Ads MCP.',
     };
   }
   return {
     ...base,
-    state: 'connected',
-    detail: 'META_ADS_ACCESS_TOKEN present · ad-touch attribution ready (live pull lands with the Meta Ads MCP wiring).',
+    state: 'unverified',
+    detail: 'META_ADS_ACCESS_TOKEN saved — not yet verified (live pull lands with the Meta Ads MCP wiring).',
     meta: { keyed: 'yes' },
   };
 }

@@ -6,7 +6,9 @@
  * deterministic and offline for tests.
  */
 import { randomUUID } from 'node:crypto';
-import { chat as llmChat, type LlmMessage } from '@/lib/connectors/llm';
+import { type LlmMessage } from '@/lib/connectors/llm';
+import { routeModel } from '@/lib/models/router';
+import { parseModelSettings } from '@/lib/models/settings';
 import type { FounderDb } from '@/lib/db';
 import type { RuntimeAgent } from '@/lib/agents/runtime';
 import type { AgentMessage } from '@/lib/schemas';
@@ -16,12 +18,20 @@ export type ChatResult = { reply: string; messages: AgentMessage[] };
 const SCREEN_CONTEXT_CAP = 4000;
 
 export function systemPromptFor(agent: RuntimeAgent, screenContext?: string): string {
-  const lines = [
-    `You are ${agent.name}, an operator agent inside Founder OS.`,
-    agent.description,
-    'Answer concisely and use your tools to read live data when it helps.',
-    'You are READ-ONLY: never claim to have sent, created, scheduled, or published anything — you can only look things up and report.',
-  ];
+  // Custom (client-authored) agents carry their own system prompt; built-ins
+  // get the generic name+description framing.
+  const lines = agent.systemPrompt
+    ? [
+        agent.systemPrompt,
+        `You are ${agent.name}, an operator agent inside IGRIS Agent.`,
+        'You are READ-ONLY: never claim to have sent, created, scheduled, or published anything — you can only look things up and report.',
+      ]
+    : [
+        `You are ${agent.name}, an operator agent inside IGRIS Agent.`,
+        agent.description,
+        'Answer concisely and use your tools to read live data when it helps.',
+        'You are READ-ONLY: never claim to have sent, created, scheduled, or published anything — you can only look things up and report.',
+      ];
   if (screenContext) {
     lines.push(
       `The operator is currently looking at this screen — use it as grounding when they say "this", "here", or ask about what they see:\n${screenContext.slice(0, SCREEN_CONTEXT_CAP)}`,
@@ -53,7 +63,13 @@ export async function chatWithAgent(
   const llmMessages: LlmMessage[] = history.map((m) => ({ role: m.role, content: m.content }));
   const tools = agent.chatTools?.();
 
-  const result = await llmChat({ system: systemPromptFor(agent, opts.screenContext), messages: llmMessages, tools });
+  // Route through the unified ModelRouter using the agent's model strategy
+  // (parsed from its stored `model` string — backward compatible).
+  const result = await routeModel(db, parseModelSettings(agent.model), {
+    system: systemPromptFor(agent, opts.screenContext),
+    messages: llmMessages,
+    tools,
+  });
 
   if (result.toolCalls.length) {
     db.agentMessages.insert({

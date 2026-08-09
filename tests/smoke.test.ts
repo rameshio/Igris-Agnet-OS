@@ -29,6 +29,8 @@ const PAGES: PageEntry[] = [
   { file: 'social/beehiiv/page.tsx', load: () => import('@/app/social/beehiiv/page') },
   { file: 'content/page.tsx', load: () => import('@/app/content/page') },
   { file: 'agents/page.tsx', load: () => import('@/app/agents/page') },
+  { file: 'models/page.tsx', load: () => import('@/app/models/page') },
+  { file: 'flows/page.tsx', load: () => import('@/app/flows/page') },
   { file: 'tasks/page.tsx', load: () => import('@/app/tasks/page') },
   { file: 'skills/page.tsx', load: () => import('@/app/skills/page') },
   { file: 'org/page.tsx', load: () => import('@/app/org/page'), props: { searchParams: {} } },
@@ -40,6 +42,7 @@ const PAGES: PageEntry[] = [
   { file: 'roadmap/page.tsx', load: () => import('@/app/roadmap/page') },
   { file: 'analytics/page.tsx', load: () => import('@/app/analytics/page') },
   { file: 'reference/page.tsx', load: () => import('@/app/reference/page') },
+  { file: 'settings/page.tsx', load: () => import('@/app/settings/page') },
   { file: 'personas/page.tsx', load: () => import('@/app/personas/page') },
   { file: 'unlock/page.tsx', load: () => import('@/app/unlock/page'), props: { searchParams: {} } },
 ];

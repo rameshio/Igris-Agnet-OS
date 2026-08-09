@@ -19,8 +19,6 @@ afterAll(() => {
   else process.env.BRAIN_PROVIDER = prevBrain;
 });
 
-const routableIds = () => realAgents.filter((a) => a.id !== 'conductor').map((a) => a.id);
-
 describe('routeConductorMessage (stub)', () => {
   test('@agent-id prefix routes straight to that agent and strips the prefix', async () => {
     const db = openDb(':memory:');
@@ -36,19 +34,35 @@ describe('routeConductorMessage (stub)', () => {
     expect(res.routedTo).toBe('data-agent');
   });
 
-  test('a bare message routes to a valid non-conductor agent and returns a reply', async () => {
+  test('a bare message is answered directly by the Conductor (its own brain)', async () => {
     const db = openDb(':memory:');
     const res = await routeConductorMessage(db, realAgents, 'how is the pipeline looking?');
-    expect(routableIds()).toContain(res.routedTo);
-    expect(res.routedTo).not.toBe('conductor');
+    expect(res.routedTo).toBe('conductor');
+    expect(res.reply.length).toBeGreaterThan(0);
+    expect(res.action).toBeUndefined();
+  });
+
+  test('an unknown @name never throws — falls back to a direct Conductor answer', async () => {
+    const db = openDb(':memory:');
+    const res = await routeConductorMessage(db, realAgents, '@nobody hello');
+    expect(res.routedTo).toBe('conductor');
     expect(res.reply.length).toBeGreaterThan(0);
   });
 
-  test('an unknown @name never throws — falls back to routing', async () => {
+  test('a create-agent request surfaces a confirm-first action proposal (not executed)', async () => {
     const db = openDb(':memory:');
-    const res = await routeConductorMessage(db, realAgents, '@nobody hello');
-    expect(res.routedTo).not.toBe('conductor');
-    expect(res.reply.length).toBeGreaterThan(0);
+    // The stub echoes the user content, so embedding the action block lets us
+    // exercise the parse/resolve path deterministically offline.
+    const msg =
+      'make one ```action\n{"action":"create_agent","name":"Lead Researcher","instructions":"Research a company before a call."}\n```';
+    const res = await routeConductorMessage(db, realAgents, msg);
+    expect(res.routedTo).toBe('conductor');
+    expect(res.action).toEqual({
+      kind: 'create_agent',
+      name: 'Lead Researcher',
+      instructions: 'Research a company before a call.',
+      departmentId: 'dept-comms',
+    });
   });
 });
 

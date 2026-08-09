@@ -19,6 +19,19 @@ export type RuntimeAgent = {
   name: string;
   description: string;
   departmentId: string;
+  /**
+   * A client-authored system prompt. Present on data-driven custom agents
+   * (lib/agents/custom.ts); it defines the agent's behavior for both run() and
+   * chat instead of the generic name+description prompt built for the built-in
+   * roster. Absent on the code-defined agents.
+   */
+  systemPrompt?: string;
+  /**
+   * The model this agent should think on. Either a Models-board provider model
+   * (`providerId:modelId`, e.g. `openai:gpt-4o`) which routes to that connected
+   * provider, or empty to use the active brain (Hermes). See lib/models.
+   */
+  model?: string;
   run(): Promise<AgentRunResult>;
   /**
    * Optional conversational entry point used by broadcasts. Agents that can

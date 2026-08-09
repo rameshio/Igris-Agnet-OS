@@ -1,7 +1,12 @@
 import { getDb } from '@/lib/data';
 import { PageHeader } from '@/components/PageHeader';
 import { AgentChat } from '@/components/AgentChat';
+import { AgentBuilder } from '@/components/AgentBuilder';
+import { EmailDigestAgent } from '@/components/EmailDigestAgent';
 import { AgentsTabs } from '@/components/AgentsTabs';
+import { INTEGRATIONS } from '@/lib/integrations-catalog';
+import { WIRED_TOOL_SLUGS } from '@/lib/agents/agent-tools';
+import { runtimeEnv } from '@/lib/creds';
 import { ConductorChat } from '@/components/ConductorChat';
 import { AgentActivityFeed } from '@/components/AgentActivityFeed';
 import { AgentCostAnalysis } from '@/components/AgentCostAnalysis';
@@ -111,6 +116,7 @@ function AgentRosterCard({
 export default function AgentsPage() {
   const db = getDb();
   const departments = db.departments.all();
+  const customAgents = db.customAgents.all();
   const agents = db.agents.all();
   const agentsById = new Map(agents.map((a) => [a.id, a]));
   const agentNames = Object.fromEntries(agents.map((a) => [a.id, a.name]));
@@ -131,10 +137,24 @@ export default function AgentsPage() {
       {/* Roster = the OS runtime below; Hermes = a worker-pool dashboard
           embedded from whatever host HERMES_DASH_URL points at. Unset in the
           demo, so the tab reports "not configured" instead of a dead frame. */}
-      <AgentsTabs hermesUrl={process.env.HERMES_DASH_URL}>
+      <AgentsTabs hermesUrl={runtimeEnv().HERMES_DASH_URL}>
       <div className="mb-6">
         <ConductorChat agentNames={agentNames} />
       </div>
+
+      <AgentBuilder
+        departments={departments.map((d) => ({ id: d.id, name: d.name }))}
+        tools={(() => {
+          const wired = new Set(WIRED_TOOL_SLUGS);
+          // Wired tools first (they actually work), then the rest of the catalog.
+          return INTEGRATIONS.map((i) => ({ slug: i.slug, name: i.name, category: i.category, wired: wired.has(i.slug) })).sort(
+            (a, b) => Number(b.wired) - Number(a.wired),
+          );
+        })()}
+        initialAgents={customAgents}
+      />
+
+      <EmailDigestAgent />
 
       <div className="mb-6 grid grid-cols-5 gap-3 max-[1100px]:grid-cols-2">
         {[

@@ -31,6 +31,44 @@ export const AgentSchema = z.object({
   instance: z.string().min(1).default('builtin'),
 });
 
+// A client-authored agent: unlike the code-defined roster (lib/agents/real.ts),
+// these are pure DATA. A generic LLM runtime (lib/agents/custom.ts) turns each
+// row into a live RuntimeAgent, so an operator can create and customize agents
+// from the UI without a code change. Stored in their own table so a seed
+// re-run never touches them and the built-in 1:1 invariant stays intact.
+export const CustomAgentSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().default(''),
+  departmentId: z.string().min(1),
+  // The system prompt: what this agent is and how it should behave.
+  instructions: z.string().min(1),
+  // Gateway model override (e.g. 'anthropic/claude-sonnet-5'); '' = system default.
+  model: z.string().default(''),
+  // Integration slugs this agent may use as tools (e.g. 'slack', 'gmail').
+  // Only slugs with a real capability (lib/agents/agent-tools.ts) become
+  // callable at runtime; the rest are recorded but inert until wired.
+  tools: z.array(z.string()).default([]),
+  enabled: z.boolean().default(true),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+export type CustomAgent = z.infer<typeof CustomAgentSchema>;
+
+// Client-supplied fields at the create/update boundary. id + timestamps are
+// assigned server-side; everything else is validated here before it touches
+// the DB. Bounds keep a hostile payload from ballooning a prompt or row.
+export const CustomAgentInputSchema = z.object({
+  name: z.string().min(1).max(80),
+  description: z.string().max(500).default(''),
+  departmentId: z.string().min(1),
+  instructions: z.string().min(1).max(8000),
+  model: z.string().max(120).default(''),
+  tools: z.array(z.string().min(1).max(60)).max(20).default([]),
+  enabled: z.boolean().default(true),
+});
+export type CustomAgentInput = z.infer<typeof CustomAgentInputSchema>;
+
 export const ToolSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -438,6 +476,60 @@ export const WorkflowSchema = z.object({
   order: z.number().int(),
   steps: z.array(WorkflowStepSchema),
 });
+
+// Client-supplied shape for building a workflow from the UI. Only the fields an
+// operator actually fills — ids, ordering, and the advanced analytics fields
+// (leak/automation/hours) are assigned server-side with safe defaults.
+export const WorkflowStepInputSchema = z.object({
+  title: z.string().min(1).max(120),
+  ownerKind: WorkflowOwnerKindSchema.default('human'),
+  owner: z.string().min(1).max(80),
+  tools: z.array(z.string().min(1)).default([]), // integration slugs to connect
+});
+export type WorkflowStepInput = z.infer<typeof WorkflowStepInputSchema>;
+
+export const WorkflowInputSchema = z.object({
+  name: z.string().min(1).max(120),
+  subtitle: z.string().max(200).default(''),
+  steps: z.array(WorkflowStepInputSchema).min(1),
+});
+export type WorkflowInput = z.infer<typeof WorkflowInputSchema>;
+
+// ── Agent Flow — a drag-and-connect canvas of agents wired into a runnable
+// chain. A node is one agent placed on the canvas; an edge means "source hands
+// off to target" (the source's output becomes the target's input). Runs walk
+// the edges and pass outputs through G-Brain shared memory.
+export const AgentFlowNodeSchema = z.object({
+  id: z.string().min(1),
+  agentId: z.string().min(1),
+  x: z.number(),
+  y: z.number(),
+});
+export const AgentFlowEdgeSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  target: z.string().min(1),
+});
+export const AgentFlowSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  nodes: z.array(AgentFlowNodeSchema),
+  edges: z.array(AgentFlowEdgeSchema),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+export type AgentFlowNode = z.infer<typeof AgentFlowNodeSchema>;
+export type AgentFlowEdge = z.infer<typeof AgentFlowEdgeSchema>;
+export type AgentFlow = z.infer<typeof AgentFlowSchema>;
+
+// Client-supplied payload when saving a flow (id + timestamps handled server-side).
+export const AgentFlowInputSchema = z.object({
+  id: z.string().min(1).max(60).default('main'),
+  name: z.string().min(1).max(120).default('Agent Flow'),
+  nodes: z.array(AgentFlowNodeSchema).max(100),
+  edges: z.array(AgentFlowEdgeSchema).max(300),
+});
+export type AgentFlowInput = z.infer<typeof AgentFlowInputSchema>;
 
 // ── Skills — the agent workforce's capability library ───────────────────────
 export const SkillStatusSchema = z.enum(['live', 'learning', 'planned']);

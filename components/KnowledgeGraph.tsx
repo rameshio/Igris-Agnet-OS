@@ -224,6 +224,14 @@ export function KnowledgeGraph({
   const linkDist = linkDistDefault;
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
+  // legend filter: kinds toggled off here are hidden from the graph (nodes + edges)
+  const [hiddenKinds, setHiddenKinds] = useState<Set<KGNodeKind>>(() => new Set());
+  const toggleKind = (k: KGNodeKind) =>
+    setHiddenKinds((prev) => {
+      const next = new Set(prev);
+      next.has(k) ? next.delete(k) : next.add(k);
+      return next;
+    });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -1433,22 +1441,33 @@ export function KnowledgeGraph({
   // compact legend for the fullscreen wheel: color + icon per kind, with the
   // Notes core in its vault orange
   const compactLegend = (
-    <div className="flex items-center gap-3 rounded-sm-t border border-os-border-strong bg-os-bg/85 px-2.5 py-1.5 backdrop-blur">
+    <div className="flex items-center gap-1 rounded-sm-t border border-os-border-strong bg-os-bg/85 px-1.5 py-1 backdrop-blur">
       {(
         [
-          { label: 'Notes', color: HUB_COLOR, Icon: CAT.self.Icon },
-          { label: 'Dept head', color: CAT.head.color, Icon: CAT.head.Icon },
-          { label: 'Human', color: CAT.person.color, Icon: CAT.person.Icon },
-          { label: 'AI agent', color: CAT.employee.color, Icon: CAT.employee.Icon },
-          { label: 'Tool', color: CAT.tool.color, Icon: CAT.tool.Icon },
-          { label: 'SOP task', color: CAT.task.color, Icon: CAT.task.Icon },
+          { label: 'Notes', kind: 'self', color: HUB_COLOR, Icon: CAT.self.Icon },
+          { label: 'Dept head', kind: 'head', color: CAT.head.color, Icon: CAT.head.Icon },
+          { label: 'Human', kind: 'person', color: CAT.person.color, Icon: CAT.person.Icon },
+          { label: 'AI agent', kind: 'employee', color: CAT.employee.color, Icon: CAT.employee.Icon },
+          { label: 'Tool', kind: 'tool', color: CAT.tool.color, Icon: CAT.tool.Icon },
+          { label: 'SOP task', kind: 'task', color: CAT.task.color, Icon: CAT.task.Icon },
         ] as const
-      ).map(({ label, color, Icon }) => (
-        <span key={label} className="flex items-center gap-1.5 font-mono text-[9.5px] text-os-muted">
-          <Icon className="h-3 w-3" style={{ color }} strokeWidth={2} />
-          {label}
-        </span>
-      ))}
+      ).map(({ label, kind, color, Icon }) => {
+        const off = hiddenKinds.has(kind);
+        return (
+          <button
+            key={label}
+            onClick={() => toggleKind(kind)}
+            aria-pressed={!off}
+            title={off ? `Show ${label}` : `Hide ${label}`}
+            className={`flex items-center gap-1.5 rounded-sm-t px-1.5 py-1 font-mono text-[9.5px] transition-colors hover:bg-os-surface ${
+              off ? 'text-os-dim line-through opacity-50' : 'text-os-muted'
+            }`}
+          >
+            <Icon className="h-3 w-3" style={{ color: off ? 'var(--dim)' : color }} strokeWidth={2} />
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 
@@ -1666,6 +1685,10 @@ export function KnowledgeGraph({
             const s = typeof l.source === 'object' ? l.source : posById.get(l.source);
             const t = typeof l.target === 'object' ? l.target : posById.get(l.target);
             if (!s || !t) return null;
+            // legend filter: drop edges that touch a hidden kind
+            const sKind = byId.get(s.id)?.kind;
+            const tKind = byId.get(t.id)?.kind;
+            if ((sKind && hiddenKinds.has(sKind)) || (tKind && hiddenKinds.has(tKind))) return null;
             // while a pillar is focused the background web disappears with its
             // nodes — the tree draws its own limbs, the flanks are gateways
             // only. Drawing a whisper web behind the stage read as clutter.
@@ -1836,6 +1859,7 @@ export function KnowledgeGraph({
         )}
 
         {nodes.map((n) => {
+          if (hiddenKinds.has(n.kind)) return null; // filtered out via the legend
           const cat = CAT[n.kind];
           const color = nodeColor(n);
           // inside the memory only Alex + the pillar gateways stay visible

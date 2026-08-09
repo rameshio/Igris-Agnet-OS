@@ -15,10 +15,10 @@ import {
 export const INTEGRATIONS: Integration[] = [
   // Communication
   { slug: 'slack', name: 'Slack', tagline: 'Channels & DMs', category: 'Communication', connectorId: 'slack', popular: true, envKeys: ['SLACK_BOT_TOKEN'] },
-  { slug: 'gmail', name: 'Gmail', tagline: 'Send & read email', category: 'Communication', connectorId: 'email', popular: true, envKeys: [] },
+  { slug: 'gmail', name: 'Gmail', tagline: 'Send & read email', category: 'Communication', connectorId: 'email', popular: true, envKeys: ['INBOX_1_HOST', 'INBOX_1_USER', 'INBOX_1_PASS'] },
   { slug: 'whatsapp', name: 'WhatsApp', tagline: 'Messages & broadcasts', category: 'Communication', connectorId: 'whatsapp', envKeys: [] },
   { slug: 'discord', name: 'Discord', tagline: 'Servers & channels', category: 'Communication' },
-  { slug: 'telegram', name: 'Telegram', tagline: 'Chats & bots', category: 'Communication' },
+  { slug: 'telegram', name: 'Telegram', tagline: 'Chats & bots', category: 'Communication', connectorId: 'telegram', popular: true, envKeys: ['TELEGRAM_BOT_TOKEN'] },
   { slug: 'zoom', name: 'Zoom', tagline: 'Meetings & recordings', category: 'Communication', popular: true },
   { slug: 'manychat', name: 'ManyChat', tagline: 'IG DM automation', category: 'Communication', connectorId: 'manychat', envKeys: ['MANYCHAT_API_KEY'] },
 
@@ -80,6 +80,15 @@ export const INTEGRATIONS: Integration[] = [
   { slug: 'obsidian', name: 'Notes', tagline: 'Markdown vault', category: 'Storage', connectorId: 'obsidian', envKeys: [] },
 
   // AI & Automation
+  // The LLM brain agents run on. One key (Vercel AI Gateway) routes to Claude,
+  // GPT, etc. Wired to the `llm` connector so agents can actually think.
+  { slug: 'ai-gateway', name: 'AI Gateway', tagline: 'The LLM brain agents run on', category: 'AI & Automation', connectorId: 'llm', popular: true, envKeys: ['AI_GATEWAY_API_KEY'] },
+  // Your Hermes worker-pool: paste its dashboard URL and it embeds under
+  // /agents → Hermes Workers. A URL, not a secret — stored the same safe way.
+  { slug: 'hermes', name: 'Hermes Workers', tagline: 'Embed your worker-pool dashboard', category: 'AI & Automation', envKeys: ['HERMES_DASH_URL'] },
+  // Shared memory that connects agents together — any agent with this can read
+  // and write the common G-Brain. Backed by the real `gbrain` connector.
+  { slug: 'gbrain', name: 'G-Brain', tagline: 'Shared agent memory (read + write)', category: 'AI & Automation', connectorId: 'gbrain', popular: true, envKeys: [] },
   { slug: 'openai', name: 'OpenAI', tagline: 'GPT models & embeddings', category: 'AI & Automation' },
   { slug: 'anthropic', name: 'Anthropic', tagline: 'Claude models', category: 'AI & Automation', popular: true },
   { slug: 'zapier', name: 'Zapier', tagline: 'Automate anything', category: 'AI & Automation' },

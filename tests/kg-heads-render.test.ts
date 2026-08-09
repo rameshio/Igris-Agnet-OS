@@ -16,7 +16,7 @@ describe('department heads render wiring', () => {
     const src = read('components/KnowledgeGraph.tsx');
     expect(src).toContain("head: { color: 'var(--brain-2)', Icon: Crown");
     expect(src).toContain("label: 'Dept heads'");
-    expect(src).toContain("{ label: 'Dept head', color: CAT.head.color, Icon: CAT.head.Icon }");
+    expect(src).toContain("{ label: 'Dept head', kind: 'head', color: CAT.head.color, Icon: CAT.head.Icon }");
     expect(src).toMatch(/import \{ Crown,/);
     // focus + hover treat a head as part of its pillar
     expect(src).toContain("n.id.replace('head:', 'team:')");

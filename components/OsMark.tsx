@@ -10,7 +10,7 @@ export function OsMark({ size = 34, className }: { size?: number; color?: string
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src="/os-emblem.png"
-      alt="Founder OS"
+      alt="IGRIS Agent"
       width={size}
       height={size}
       style={{ width: size, height: size, objectFit: 'contain' }}

@@ -1,11 +1,15 @@
 import Database from 'better-sqlite3';
 import { isValidCron } from '@/lib/cron';
+import type { WorkflowGraph } from '@/lib/flows/schema';
+import type { FlowRun, FlowNodeRun, RunStatus, NodeRunStatus, NodeOutput, StartRunInput } from '@/lib/flows/run-types';
 import {
   AgentCronSchema,
   AgentMessageSchema,
   AgentRunSchema,
   AgentSchema,
   AgentTaskSchema,
+  AgentFlowSchema,
+  CustomAgentSchema,
   BroadcastReplySchema,
   BroadcastSchema,
   ContactTagSchema,
@@ -35,9 +39,11 @@ import {
   type AgentMessage,
   type AgentRun,
   type AgentTask,
+  type AgentFlow,
   type Broadcast,
   type BroadcastReply,
   type ContactTag,
+  type CustomAgent,
   type Department,
   type Domain,
   type Metric,
@@ -91,6 +97,109 @@ CREATE TABLE IF NOT EXISTS tools (
   color TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS custom_agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  department_id TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  tools TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_flows (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  nodes TEXT NOT NULL DEFAULT '[]',
+  edges TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+-- /flows orchestrator (Phase A). A workflow's editable draft graph lives on the
+-- workflow row; published versions are immutable snapshots. Runs (Phase C) will
+-- reference a version so historical runs always have a stable definition.
+CREATE TABLE IF NOT EXISTS flow_workflows (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  draft_graph TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+  current_version INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS flow_versions (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  graph TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (workflow_id, version)
+);
+-- App-wide model-provider connection state (Phase B). Metadata + health ONLY.
+-- The API secret NEVER lives here — it stays in .env.local; has_credential is
+-- derived from the env at read time, not stored.
+CREATE TABLE IF NOT EXISTS model_provider_connections (
+  provider_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  base_url TEXT,
+  last_check_at TEXT,
+  last_success_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+-- Workflow EXECUTION history (Phase C). One run of one immutable version; per-node
+-- records. Runtime status lives here only — never written back into the graph.
+CREATE TABLE IF NOT EXISTS flow_runs (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL,
+  workflow_version INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  starting_input TEXT NOT NULL DEFAULT '{}',
+  current_node_id TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  total_tokens INTEGER,
+  estimated_cost REAL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS flow_node_runs (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  node_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  input_json TEXT,
+  output_json TEXT,
+  provider_id TEXT,
+  model_id TEXT,
+  model_strategy TEXT,
+  adapter TEXT,
+  prompt_tokens INTEGER,
+  completion_tokens INTEGER,
+  total_tokens INTEGER,
+  estimated_cost REAL,
+  started_at TEXT,
+  ended_at TEXT,
+  duration_ms INTEGER,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flow_runs_workflow ON flow_runs (workflow_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_flow_node_runs_run ON flow_node_runs (run_id);
 CREATE TABLE IF NOT EXISTS roadmap_items (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -338,6 +447,17 @@ function migrateSkillsTable(db: InstanceType<typeof Database>): void {
   }
 }
 
+// custom_agents gained a `tools` column so an agent can carry connectable
+// tools; back-fill databases created before it with an empty list.
+function migrateCustomAgentsTable(db: InstanceType<typeof Database>): void {
+  const columns = new Set(
+    (db.pragma('table_info(custom_agents)') as { name: string }[]).map((c) => c.name),
+  );
+  if (columns.size > 0 && !columns.has('tools')) {
+    db.exec("ALTER TABLE custom_agents ADD COLUMN tools TEXT NOT NULL DEFAULT '[]'");
+  }
+}
+
 // agent_runs gained LLM cost columns after first ship: the model used and the
 // token usage + estimated cost, so /agents can show runtime and spend.
 function migrateAgentRunsTable(db: InstanceType<typeof Database>): void {
@@ -387,6 +507,7 @@ export function openDb(path: string) {
   migrateAgentsTable(db);
   migrateFunnelContactsTable(db);
   migrateSkillsTable(db);
+  migrateCustomAgentsTable(db);
   migrateAgentRunsTable(db);
 
   const departments = {
@@ -429,6 +550,564 @@ export function openDb(path: string) {
     deleteWhereIdNotIn(ids: string[]): void {
       const placeholders = ids.map(() => '?').join(', ');
       db.prepare(`DELETE FROM agents WHERE id NOT IN (${placeholders})`).run(...ids);
+    },
+  };
+
+  const rowToCustomAgent = (r: any): CustomAgent =>
+    CustomAgentSchema.parse({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      departmentId: r.department_id,
+      instructions: r.instructions,
+      model: r.model,
+      tools: JSON.parse(r.tools ?? '[]'),
+      enabled: Boolean(r.enabled),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    });
+
+  const customAgents = {
+    all(): CustomAgent[] {
+      return db
+        .prepare('SELECT * FROM custom_agents ORDER BY created_at DESC, rowid DESC')
+        .all()
+        .map(rowToCustomAgent);
+    },
+    get(id: string): CustomAgent | null {
+      const row = db.prepare('SELECT * FROM custom_agents WHERE id = ?').get(id);
+      return row ? rowToCustomAgent(row) : null;
+    },
+    insert(a: CustomAgent): void {
+      CustomAgentSchema.parse(a);
+      db.prepare(
+        'INSERT OR REPLACE INTO custom_agents (id, name, description, department_id, instructions, model, tools, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        a.id, a.name, a.description, a.departmentId, a.instructions, a.model,
+        JSON.stringify(a.tools), a.enabled ? 1 : 0, a.createdAt, a.updatedAt,
+      );
+    },
+    remove(id: string): void {
+      db.prepare('DELETE FROM custom_agents WHERE id = ?').run(id);
+    },
+  };
+
+  const rowToAgentFlow = (r: any): AgentFlow =>
+    AgentFlowSchema.parse({
+      id: r.id,
+      name: r.name,
+      nodes: JSON.parse(r.nodes ?? '[]'),
+      edges: JSON.parse(r.edges ?? '[]'),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    });
+
+  const agentFlows = {
+    all(): AgentFlow[] {
+      return db.prepare('SELECT * FROM agent_flows ORDER BY updated_at DESC').all().map(rowToAgentFlow);
+    },
+    get(id: string): AgentFlow | null {
+      const row = db.prepare('SELECT * FROM agent_flows WHERE id = ?').get(id);
+      return row ? rowToAgentFlow(row) : null;
+    },
+    upsert(f: AgentFlow): void {
+      AgentFlowSchema.parse(f);
+      db.prepare(
+        'INSERT OR REPLACE INTO agent_flows (id, name, nodes, edges, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(f.id, f.name, JSON.stringify(f.nodes), JSON.stringify(f.edges), f.createdAt, f.updatedAt);
+    },
+    remove(id: string): void {
+      db.prepare('DELETE FROM agent_flows WHERE id = ?').run(id);
+    },
+  };
+
+  // A tiny key/value store for instance-level flags — e.g. `demo_cleared`, set
+  // once a workspace is reset so seedDatabase never repopulates the demo data.
+  const meta = {
+    get(key: string): string | null {
+      const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
+      return row?.value ?? null;
+    },
+    set(key: string, value: string): void {
+      db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
+    },
+  };
+
+  // ── /flows orchestrator repos (Phase A). Definition (draft + immutable
+  //    versions) only — run history is Phase C.
+  type FlowWorkflowRow = {
+    id: string;
+    name: string;
+    description: string;
+    draft_graph: string;
+    current_version: number | null;
+    created_at: string;
+    updated_at: string;
+  };
+  type FlowVersionRow = { id: string; workflow_id: string; version: number; graph: string; created_at: string };
+
+  const parseGraph = (s: string): WorkflowGraph => {
+    try {
+      return JSON.parse(s) as WorkflowGraph;
+    } catch {
+      return { nodes: [], edges: [] };
+    }
+  };
+  const rowToWorkflow = (r: FlowWorkflowRow) => ({
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    draftGraph: parseGraph(r.draft_graph),
+    currentVersion: r.current_version,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+
+  const flowWorkflows = {
+    all() {
+      return db
+        .prepare('SELECT * FROM flow_workflows ORDER BY updated_at DESC')
+        .all()
+        .map((r) => rowToWorkflow(r as FlowWorkflowRow));
+    },
+    get(id: string) {
+      const r = db.prepare('SELECT * FROM flow_workflows WHERE id = ?').get(id) as FlowWorkflowRow | undefined;
+      return r ? rowToWorkflow(r) : null;
+    },
+    create(input: { id: string; name: string; description?: string; graph: WorkflowGraph }) {
+      const now = new Date().toISOString();
+      db.prepare(
+        'INSERT INTO flow_workflows (id, name, description, draft_graph, current_version, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?)',
+      ).run(input.id, input.name, input.description ?? '', JSON.stringify(input.graph), now, now);
+      return this.get(input.id)!;
+    },
+    saveDraft(id: string, graph: WorkflowGraph) {
+      db.prepare('UPDATE flow_workflows SET draft_graph = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify(graph),
+        new Date().toISOString(),
+        id,
+      );
+    },
+    updateMeta(id: string, patch: { name?: string; description?: string }) {
+      const cur = this.get(id);
+      if (!cur) return;
+      db.prepare('UPDATE flow_workflows SET name = ?, description = ?, updated_at = ? WHERE id = ?').run(
+        patch.name ?? cur.name,
+        patch.description ?? cur.description,
+        new Date().toISOString(),
+        id,
+      );
+    },
+    setCurrentVersion(id: string, version: number) {
+      db.prepare('UPDATE flow_workflows SET current_version = ?, updated_at = ? WHERE id = ?').run(
+        version,
+        new Date().toISOString(),
+        id,
+      );
+    },
+    remove(id: string) {
+      db.prepare('DELETE FROM flow_versions WHERE workflow_id = ?').run(id);
+      db.prepare('DELETE FROM flow_workflows WHERE id = ?').run(id);
+    },
+  };
+
+  const flowVersions = {
+    forWorkflow(workflowId: string) {
+      return db
+        .prepare('SELECT id, workflow_id, version, created_at FROM flow_versions WHERE workflow_id = ? ORDER BY version DESC')
+        .all(workflowId)
+        .map((r) => {
+          const row = r as Omit<FlowVersionRow, 'graph'>;
+          return { id: row.id, workflowId: row.workflow_id, version: row.version, createdAt: row.created_at };
+        });
+    },
+    get(workflowId: string, version: number) {
+      const r = db
+        .prepare('SELECT * FROM flow_versions WHERE workflow_id = ? AND version = ?')
+        .get(workflowId, version) as FlowVersionRow | undefined;
+      return r ? { id: r.id, workflowId: r.workflow_id, version: r.version, graph: parseGraph(r.graph), createdAt: r.created_at } : null;
+    },
+    nextVersion(workflowId: string): number {
+      const row = db.prepare('SELECT MAX(version) AS m FROM flow_versions WHERE workflow_id = ?').get(workflowId) as { m: number | null };
+      return (row.m ?? 0) + 1;
+    },
+    create(input: { id: string; workflowId: string; version: number; graph: WorkflowGraph }) {
+      db.prepare('INSERT INTO flow_versions (id, workflow_id, version, graph, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        input.id,
+        input.workflowId,
+        input.version,
+        JSON.stringify(input.graph),
+        new Date().toISOString(),
+      );
+    },
+  };
+
+  // ── Model-provider connection state (Phase B). Metadata + health only; the
+  //    secret stays in .env.local. Absent row = defaults (enabled, no override).
+  type ModelConnRow = {
+    provider_id: string;
+    display_name: string;
+    enabled: number;
+    base_url: string | null;
+    last_check_at: string | null;
+    last_success_at: string | null;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const rowToModelConn = (r: ModelConnRow) => ({
+    providerId: r.provider_id,
+    displayName: r.display_name,
+    enabled: r.enabled === 1,
+    baseUrl: r.base_url,
+    lastCheckAt: r.last_check_at,
+    lastSuccessAt: r.last_success_at,
+    lastError: r.last_error,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  const modelConnections = {
+    all() {
+      return db.prepare('SELECT * FROM model_provider_connections').all().map((r) => rowToModelConn(r as ModelConnRow));
+    },
+    get(providerId: string) {
+      const r = db.prepare('SELECT * FROM model_provider_connections WHERE provider_id = ?').get(providerId) as ModelConnRow | undefined;
+      return r ? rowToModelConn(r) : null;
+    },
+    /** Create/patch connection metadata. Never touches secrets. */
+    upsert(providerId: string, patch: { displayName?: string; enabled?: boolean; baseUrl?: string | null }) {
+      const now = new Date().toISOString();
+      const cur = this.get(providerId);
+      if (!cur) {
+        db.prepare(
+          'INSERT INTO model_provider_connections (provider_id, display_name, enabled, base_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        ).run(providerId, patch.displayName ?? '', patch.enabled === false ? 0 : 1, patch.baseUrl ?? null, now, now);
+      } else {
+        db.prepare('UPDATE model_provider_connections SET display_name = ?, enabled = ?, base_url = ?, updated_at = ? WHERE provider_id = ?').run(
+          patch.displayName ?? cur.displayName,
+          (patch.enabled ?? cur.enabled) ? 1 : 0,
+          patch.baseUrl !== undefined ? patch.baseUrl : cur.baseUrl,
+          now,
+          providerId,
+        );
+      }
+      return this.get(providerId)!;
+    },
+    recordCheck(providerId: string, result: { ok: boolean; error?: string | null }) {
+      const now = new Date().toISOString();
+      // ensure a row exists
+      if (!this.get(providerId)) this.upsert(providerId, {});
+      db.prepare(
+        'UPDATE model_provider_connections SET last_check_at = ?, last_success_at = COALESCE(?, last_success_at), last_error = ?, updated_at = ? WHERE provider_id = ?',
+      ).run(now, result.ok ? now : null, result.ok ? null : (result.error ?? 'error').slice(0, 500), now, providerId);
+      return this.get(providerId)!;
+    },
+    remove(providerId: string) {
+      db.prepare('DELETE FROM model_provider_connections WHERE provider_id = ?').run(providerId);
+    },
+  };
+
+  // ── Workflow run history (Phase C). Definition stays immutable; this is exec.
+  const parseJson = <T,>(s: string | null, fallback: T): T => {
+    if (s == null) return fallback;
+    try {
+      return JSON.parse(s) as T;
+    } catch {
+      return fallback;
+    }
+  };
+  type FlowRunRow = {
+    id: string;
+    workflow_id: string;
+    workflow_version: number;
+    status: string;
+    starting_input: string;
+    current_node_id: string | null;
+    started_at: string | null;
+    ended_at: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    total_tokens: number | null;
+    estimated_cost: number | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const rowToFlowRun = (r: FlowRunRow): FlowRun => ({
+    id: r.id,
+    workflowId: r.workflow_id,
+    workflowVersion: r.workflow_version,
+    status: r.status as RunStatus,
+    startingInput: parseJson<StartRunInput>(r.starting_input, { text: '' }),
+    currentNodeId: r.current_node_id,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    errorCode: r.error_code,
+    errorMessage: r.error_message,
+    totalTokens: r.total_tokens,
+    estimatedCost: r.estimated_cost,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  const flowRuns = {
+    create(input: { id: string; workflowId: string; workflowVersion: number; startingInput: StartRunInput }): FlowRun {
+      const now = new Date().toISOString();
+      db.prepare(
+        'INSERT INTO flow_runs (id, workflow_id, workflow_version, status, starting_input, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(input.id, input.workflowId, input.workflowVersion, 'queued', JSON.stringify(input.startingInput), now, now);
+      return this.get(input.id)!;
+    },
+    get(id: string): FlowRun | null {
+      const r = db.prepare('SELECT * FROM flow_runs WHERE id = ?').get(id) as FlowRunRow | undefined;
+      return r ? rowToFlowRun(r) : null;
+    },
+    recentForWorkflow(workflowId: string, limit = 20): FlowRun[] {
+      return db
+        .prepare('SELECT * FROM flow_runs WHERE workflow_id = ? ORDER BY created_at DESC LIMIT ?')
+        .all(workflowId, limit)
+        .map((r) => rowToFlowRun(r as FlowRunRow));
+    },
+    update(id: string, patch: Partial<Pick<FlowRun, 'status' | 'currentNodeId' | 'startedAt' | 'endedAt' | 'errorCode' | 'errorMessage' | 'totalTokens' | 'estimatedCost'>>): FlowRun | null {
+      const cur = this.get(id);
+      if (!cur) return null;
+      const next = { ...cur, ...patch };
+      db.prepare(
+        'UPDATE flow_runs SET status=?, current_node_id=?, started_at=?, ended_at=?, error_code=?, error_message=?, total_tokens=?, estimated_cost=?, updated_at=? WHERE id=?',
+      ).run(
+        next.status,
+        next.currentNodeId,
+        next.startedAt,
+        next.endedAt,
+        next.errorCode,
+        next.errorMessage,
+        next.totalTokens,
+        next.estimatedCost,
+        new Date().toISOString(),
+        id,
+      );
+      return this.get(id);
+    },
+  };
+
+  type FlowNodeRunRow = {
+    id: string;
+    run_id: string;
+    node_id: string;
+    node_type: string;
+    status: string;
+    input_json: string | null;
+    output_json: string | null;
+    provider_id: string | null;
+    model_id: string | null;
+    model_strategy: string | null;
+    adapter: string | null;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+    total_tokens: number | null;
+    estimated_cost: number | null;
+    started_at: string | null;
+    ended_at: string | null;
+    duration_ms: number | null;
+    attempt: number;
+    error_code: string | null;
+    error_message: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const rowToNodeRun = (r: FlowNodeRunRow): FlowNodeRun => ({
+    id: r.id,
+    runId: r.run_id,
+    nodeId: r.node_id,
+    nodeType: r.node_type,
+    status: r.status as NodeRunStatus,
+    input: parseJson<unknown>(r.input_json, null),
+    output: parseJson<NodeOutput | null>(r.output_json, null),
+    providerId: r.provider_id,
+    modelId: r.model_id,
+    modelStrategy: r.model_strategy,
+    adapter: r.adapter,
+    promptTokens: r.prompt_tokens,
+    completionTokens: r.completion_tokens,
+    totalTokens: r.total_tokens,
+    estimatedCost: r.estimated_cost,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    durationMs: r.duration_ms,
+    attempt: r.attempt,
+    errorCode: r.error_code,
+    errorMessage: r.error_message,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  const flowNodeRuns = {
+    create(input: { id: string; runId: string; nodeId: string; nodeType: string; status: NodeRunStatus }): FlowNodeRun {
+      const now = new Date().toISOString();
+      db.prepare('INSERT INTO flow_node_runs (id, run_id, node_id, node_type, status, attempt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)').run(
+        input.id,
+        input.runId,
+        input.nodeId,
+        input.nodeType,
+        input.status,
+        now,
+        now,
+      );
+      return this.get(input.id)!;
+    },
+    get(id: string): FlowNodeRun | null {
+      const r = db.prepare('SELECT * FROM flow_node_runs WHERE id = ?').get(id) as FlowNodeRunRow | undefined;
+      return r ? rowToNodeRun(r) : null;
+    },
+    forRun(runId: string): FlowNodeRun[] {
+      return db.prepare('SELECT * FROM flow_node_runs WHERE run_id = ? ORDER BY created_at').all(runId).map((r) => rowToNodeRun(r as FlowNodeRunRow));
+    },
+    update(
+      id: string,
+      patch: Partial<
+        Pick<
+          FlowNodeRun,
+          | 'status'
+          | 'input'
+          | 'output'
+          | 'providerId'
+          | 'modelId'
+          | 'modelStrategy'
+          | 'adapter'
+          | 'promptTokens'
+          | 'completionTokens'
+          | 'totalTokens'
+          | 'estimatedCost'
+          | 'startedAt'
+          | 'endedAt'
+          | 'durationMs'
+          | 'errorCode'
+          | 'errorMessage'
+        >
+      >,
+    ): FlowNodeRun | null {
+      const cur = this.get(id);
+      if (!cur) return null;
+      const n = { ...cur, ...patch };
+      db.prepare(
+        `UPDATE flow_node_runs SET status=?, input_json=?, output_json=?, provider_id=?, model_id=?, model_strategy=?, adapter=?,
+          prompt_tokens=?, completion_tokens=?, total_tokens=?, estimated_cost=?, started_at=?, ended_at=?, duration_ms=?,
+          error_code=?, error_message=?, updated_at=? WHERE id=?`,
+      ).run(
+        n.status,
+        n.input === null ? null : JSON.stringify(n.input),
+        n.output === null ? null : JSON.stringify(n.output),
+        n.providerId,
+        n.modelId,
+        n.modelStrategy,
+        n.adapter,
+        n.promptTokens,
+        n.completionTokens,
+        n.totalTokens,
+        n.estimatedCost,
+        n.startedAt,
+        n.endedAt,
+        n.durationMs,
+        n.errorCode,
+        n.errorMessage,
+        new Date().toISOString(),
+        id,
+      );
+      return this.get(id);
+    },
+  };
+
+  // One-time, idempotent import of the legacy `agent_flows` "main" canvas into a
+  // real workflow (id `wf-main`). Preserves node positions, agent references,
+  // edges, and the flow name. The old table is left untouched (backward compat).
+  const flowMaintenance = {
+    importMainFlow(): { imported: boolean } {
+      if (flowWorkflows.get('wf-main')) return { imported: false }; // already imported — idempotent
+      const main = db.prepare("SELECT name, nodes, edges FROM agent_flows WHERE id = 'main'").get() as
+        | { name: string; nodes: string; edges: string }
+        | undefined;
+      if (!main) return { imported: false };
+      let nodesRaw: { id: string; agentId: string; x: number; y: number }[] = [];
+      let edgesRaw: { id: string; source: string; target: string }[] = [];
+      try {
+        nodesRaw = JSON.parse(main.nodes);
+        edgesRaw = JSON.parse(main.edges);
+      } catch {
+        return { imported: false }; // malformed legacy data — never crash DB open
+      }
+      const graph: WorkflowGraph = {
+        nodes: nodesRaw.map((n) => ({ id: n.id, type: 'agent', x: n.x, y: n.y, config: { agentId: n.agentId } })),
+        edges: edgesRaw.map((e) => ({ id: e.id, source: e.source, target: e.target, mapping: { mode: 'all' as const } })),
+        metadata: { importedFrom: 'agent_flows:main' },
+      };
+      flowWorkflows.create({
+        id: 'wf-main',
+        name: main.name || 'Agent Flow',
+        description: 'Imported from the original Agent Flow canvas.',
+        graph,
+      });
+      flowVersions.create({ id: 'wf-main-v1', workflowId: 'wf-main', version: 1, graph });
+      flowWorkflows.setCurrentVersion('wf-main', 1);
+      return { imported: true };
+    },
+  };
+
+  // Workspace reset. Both routines deliberately leave the structural scaffolding
+  // (departments, the built-in agent roster, tools) AND every client-created
+  // custom agent intact, so the OS keeps working — it just empties out.
+  const maintenance = {
+    // Wipe accumulated operational logs: runs, chats, broadcasts, tasks, crons,
+    // inbound DMs, contact tags, queued posts. Reference/content tables untouched.
+    clearActivity(): void {
+      for (const t of [
+        'broadcast_replies',
+        'broadcasts',
+        'agent_runs',
+        'agent_messages',
+        'agent_tasks',
+        'agent_crons',
+        'social_dm_messages',
+        'contact_tags',
+        'social_posts',
+      ]) {
+        db.prepare(`DELETE FROM ${t}`).run();
+      }
+    },
+    // A full "start clean": activity + ALL seeded demo content — the funnel,
+    // social presence, email list, every fabricated business artifact
+    // (personas, roadmap, workflows, skills, metrics, reference domains, org
+    // SOPs, people), AND the seeded agent roster + tool catalog (named after
+    // one specific business). Sets `demo_cleared` so a re-seed never brings it
+    // back. The client fills the blank roster with their own custom agents.
+    //
+    // What survives is only the neutral scaffolding: the departments (a generic
+    // org structure) and every client-created custom agent.
+    clearDemoContent(): void {
+      this.clearActivity();
+      for (const t of [
+        // demo business data
+        'funnel_touches',
+        'funnel_contacts',
+        'social_snapshots',
+        'social_dm_snapshots',
+        'social_dms',
+        'social_accounts',
+        'email_list_snapshots',
+        // fabricated content that made the app look like one specific business
+        'personas',
+        'roadmap_items',
+        'workflows',
+        'skills',
+        'metrics',
+        'domains',
+        'phases',
+        'sop_tasks',
+        'people',
+        // the seeded roster + tool catalog carry business-specific names, so a
+        // blank slate clears them too — custom_agents (the client's own) stay.
+        'agents',
+        'tools',
+      ]) {
+        db.prepare(`DELETE FROM ${t}`).run();
+      }
+      meta.set('demo_cleared', '1');
     },
   };
 
@@ -990,11 +1669,32 @@ export function openDb(path: string) {
           }),
         );
     },
+    get(id: string): Workflow | null {
+      const r = db.prepare('SELECT * FROM workflows WHERE id = ?').get(id) as any;
+      return r
+        ? WorkflowSchema.parse({
+            id: r.id,
+            name: r.name,
+            subtitle: r.subtitle,
+            revenueUsd: r.revenue_usd,
+            order: r.ord,
+            steps: JSON.parse(r.steps),
+          })
+        : null;
+    },
+    /** Highest current order, or -1 when empty — callers append at maxOrder + 1. */
+    maxOrder(): number {
+      const r = db.prepare('SELECT MAX(ord) AS m FROM workflows').get() as { m: number | null };
+      return r.m ?? -1;
+    },
     insert(w: Workflow): void {
       WorkflowSchema.parse(w);
       db.prepare(
         'INSERT OR REPLACE INTO workflows (id, name, subtitle, revenue_usd, ord, steps) VALUES (?, ?, ?, ?, ?, ?)',
       ).run(w.id, w.name, w.subtitle, w.revenueUsd, w.order, JSON.stringify(w.steps));
+    },
+    remove(id: string): void {
+      db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
     },
     deleteWhereIdNotIn(ids: string[]): void {
       const placeholders = ids.map(() => '?').join(', ');
@@ -1089,9 +1789,27 @@ export function openDb(path: string) {
     },
   };
 
+  // Bring the legacy "main" canvas into the new workflow system on first open.
+  // Idempotent (keyed on the `wf-main` id) and best-effort — never blocks DB open.
+  try {
+    flowMaintenance.importMainFlow();
+  } catch {
+    /* legacy import is best-effort */
+  }
+
   return {
     departments,
     agents,
+    customAgents,
+    agentFlows,
+    flowWorkflows,
+    flowVersions,
+    flowMaintenance,
+    flowRuns,
+    flowNodeRuns,
+    modelConnections,
+    meta,
+    maintenance,
     tools,
     roadmap,
     metrics,

@@ -8,7 +8,11 @@
  * AI_GATEWAY_API_KEY ⇒ not_configured, never a fake "connected".
  */
 import { z } from 'zod';
-import { CRED_FILES, resolveCred } from '@/lib/creds';
+import { CRED_FILES, resolveCred, readEnvLocal } from '@/lib/creds';
+import { createHermesCliProvider } from '@/lib/connectors/hermes-cli';
+import { createHermesAcpProvider } from '@/lib/connectors/hermes-acp';
+import { createOpenAiCompatibleProvider } from '@/lib/connectors/openai-compatible';
+import { resolveAgentModel, looksProviderScoped } from '@/lib/models/resolve';
 import type { ConnectorStatus } from '@/lib/connectors/types';
 
 export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
@@ -127,14 +131,36 @@ export function createGatewayProvider(model: string = DEFAULT_MODEL): LlmProvide
   };
 }
 
+/**
+ * Resolve the active brain. process.env wins (tests set it); otherwise the
+ * value saved in .env.local via the UI is read fresh so a brain switch takes
+ * effect without a restart. The .env.local read is skipped under Vitest so the
+ * suite never picks up a developer's local brain choice.
+ */
+export function activeLlmProviderName(): string {
+  const fromLocal = process.env.VITEST ? undefined : readEnvLocal().LLM_PROVIDER;
+  return process.env.LLM_PROVIDER ?? fromLocal ?? 'gateway';
+}
+
 export function getLlmProvider(): LlmProvider {
-  const name = process.env.LLM_PROVIDER ?? 'gateway';
+  const name = activeLlmProviderName();
   if (name === 'stub') return stubLlmProvider;
+  if (name === 'hermes-acp') return createHermesAcpProvider();
+  if (name === 'hermes' || name === 'hermes-cli') return createHermesCliProvider();
   return createGatewayProvider();
 }
 
 export function chat(req: LlmChatRequest): Promise<LlmChatResult> {
-  return getLlmProvider().chat(req);
+  // A `providerId:modelId` model (set on an agent via the Models board) routes
+  // to that connected provider directly; otherwise the active brain handles it.
+  const routed = resolveAgentModel(req.model);
+  if (routed) {
+    return createOpenAiCompatibleProvider(routed.provider.baseUrl, routed.apiKey, routed.modelId).chat(req);
+  }
+  // If the model is provider-scoped but unresolved (provider not connected),
+  // drop it so the brain doesn't misread it as its own model id.
+  const forBrain = looksProviderScoped(req.model) ? { ...req, model: undefined } : req;
+  return getLlmProvider().chat(forBrain);
 }
 
 export async function llmStatus(): Promise<ConnectorStatus> {

@@ -18,14 +18,13 @@ export async function trakyoStatus(): Promise<ConnectorStatus> {
     return {
       ...base,
       state: 'not_configured',
-      detail:
-        'Revenue attribution (content → calls → payments) for Launchpad Cohort. Set TRAKYO_API_KEY once Trakyo exposes an API.',
+      detail: 'Revenue attribution (content → calls → payments). Set TRAKYO_API_KEY once Trakyo exposes an API.',
     };
   }
   return {
     ...base,
-    state: 'connected',
-    detail: 'TRAKYO_API_KEY present · attribution lane ready (live query wiring lands with the public API).',
+    state: 'unverified',
+    detail: 'TRAKYO_API_KEY saved — not yet verified (Trakyo has no public API to check against yet).',
     meta: { keyed: 'yes' },
   };
 }

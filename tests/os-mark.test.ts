@@ -32,7 +32,7 @@ describe('OS mark branding', () => {
   test('the sidebar is wordmark-only', () => {
     const sidebar = read('components/Sidebar.tsx');
     expect(sidebar).not.toContain('OsMark');
-    expect(sidebar).toContain('FOUNDER OS');
+    expect(sidebar).toContain('IGRIS AGENT');
     // the mark renders no text at all
     expect(read('components/OsMark.tsx')).not.toMatch(/<text/);
   });

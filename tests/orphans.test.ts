@@ -4,7 +4,12 @@ import path from 'node:path';
 
 // Every component must be imported somewhere — no dead files. If a component is
 // intentionally kept unused (rare), add its basename here with a reason.
-const KNOWN_ORPHANS: string[] = [];
+const KNOWN_ORPHANS: string[] = [
+  // Legacy Agent Flow canvas — superseded by the /flows orchestrator and no
+  // longer rendered on /brain, but kept operational for backward compatibility
+  // (its /api/agent-flows route still works) until /flows reaches full parity.
+  'AgentFlowCanvas',
+];
 
 const ROOT = process.cwd();
 

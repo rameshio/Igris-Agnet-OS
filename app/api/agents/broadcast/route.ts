@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/data';
 import { createRuntime } from '@/lib/agents/runtime';
-import { realAgents } from '@/lib/agents/real';
+import { allRuntimeAgents } from '@/lib/agents/registry';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs'; // better-sqlite3 is native — keep off the edge runtime
 
 export async function GET() {
   return NextResponse.json({ broadcasts: getDb().broadcasts.recent(10) });
@@ -20,7 +21,8 @@ export async function POST(req: Request) {
   if (!message) {
     return NextResponse.json({ error: 'message is required' }, { status: 400 });
   }
-  const runtime = createRuntime(getDb(), realAgents);
-  const broadcast = await runtime.broadcast(message);
+  const db = getDb();
+  const rt = createRuntime(db, allRuntimeAgents(db));
+  const broadcast = await rt.broadcast(message);
   return NextResponse.json({ broadcast });
 }

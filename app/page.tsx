@@ -73,6 +73,12 @@ function greeting(): string {
   return 'Good evening';
 }
 
+// The operator's name is configurable — set OPERATOR_NAME in .env.local to
+// personalize for a client. Defaults to a neutral label, never a demo name.
+function operatorName(): string {
+  return process.env.OPERATOR_NAME?.trim() || 'Operator';
+}
+
 function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms) || ms < 0) return 'just now';
@@ -192,7 +198,7 @@ export default async function HomePage() {
 
       <PageHeader
         eyebrow="operator console"
-        title={`${greeting()}, Alex`}
+        title={`${greeting()}, ${operatorName()}`}
         caret
         right={<Kbd>⌘K</Kbd>}
       />
