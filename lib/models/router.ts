@@ -9,7 +9,7 @@
  */
 import type { FounderDb } from '@/lib/db';
 import type { LlmChatRequest } from '@/lib/connectors/llm';
-import { getLlmProvider } from '@/lib/connectors/llm';
+import { getHermesClient } from '@/lib/connectors/hermes-client';
 import { createOpenAiCompatibleProvider } from '@/lib/connectors/openai-compatible';
 import { providerRequiresKey } from '@/lib/models/catalog';
 import { resolveConnection } from '@/lib/models/connections';
@@ -37,10 +37,21 @@ export async function routeModel(
   }
 
   if (settings.strategy === 'hermes') {
-    const brain = getLlmProvider(); // the active brain (Hermes ACP by default)
+    // The Hermes runtime is reached through the canonical HermesClient seam (H1).
+    // In production this wraps the active brain (ACP by default); ACP stays the
+    // transport. No silent fallback: a Hermes failure surfaces as hermes_unavailable.
+    const hermes = getHermesClient(db); // db selects the production transport (ACP default / serve if configured)
     try {
-      const res = await brain.chat({ ...req, model: settings.config.modelId });
-      return { ...res, strategy: 'hermes', adapter: `brain:${brain.name}`, modelId: settings.config.modelId, fallbackUsed: false };
+      const res = await hermes.chat({ ...req, model: settings.config.modelId });
+      return {
+        text: res.text,
+        toolCalls: res.toolCalls,
+        usage: res.usage,
+        strategy: 'hermes',
+        adapter: `brain:${res.brainName}`,
+        modelId: settings.config.modelId,
+        fallbackUsed: false,
+      };
     } catch (err) {
       throw new ModelRouteError('hermes_unavailable', err instanceof Error ? err.message.slice(0, 200) : 'Hermes unavailable.');
     }

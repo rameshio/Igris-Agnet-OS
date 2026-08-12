@@ -15,18 +15,24 @@ import type { z } from 'zod';
 import { NODE_CONFIG_SCHEMAS, type NodeType, type WorkflowNode } from '@/lib/flows/schema';
 import { NODE_TYPE_META } from '@/lib/flows/node-types';
 import type { NodeOutput, NodeRunMeta, StartRunInput } from '@/lib/flows/run-types';
+import type { RefScope } from '@/lib/flows/references';
+import type { ResolvedSource } from '@/lib/flows/inputs';
 import type { FounderDb } from '@/lib/db';
 import type { RuntimeAgent } from '@/lib/agents/runtime';
 
 export type { NodeOutput } from '@/lib/flows/run-types';
 
-/** Execution context handed to an executor by the engine (Phase C). */
+/** Execution context handed to an executor by the engine (Phase C, extended in D). */
 export type NodeExecContext = {
   node: WorkflowNode;
-  /** Resolved input for this node (upstream outputs merged by the engine). */
+  /** Resolved input for this node (active upstream outputs merged by the engine). */
   input: NodeOutput;
   /** Structured state of already-succeeded nodes, keyed by node id. */
   state: Record<string, NodeOutput>;
+  /** Reference scope (Phase D): succeeded nodes by id + unique-label aliases. */
+  scope: RefScope;
+  /** Resolved active incoming sources (Phase D) — used by Join to key branches. */
+  sources: ResolvedSource[];
   /** The run's starting input. */
   startingInput: StartRunInput;
   db: FounderDb;

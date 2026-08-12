@@ -14,6 +14,7 @@ import { getDb } from '@/lib/data';
 import { allRuntimeAgents } from '@/lib/agents/registry';
 import { WorkflowGraphSchema } from '@/lib/flows/schema';
 import { validateWorkflowGraph } from '@/lib/flows/validator';
+import { removeOrArchiveWorkflow } from '@/lib/flows/workflow-admin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,7 +31,9 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
 }
 
 const PatchBody = z.object({
-  name: z.string().min(1).max(120).optional(),
+  // Rename: trimmed + non-empty (a whitespace-only name is rejected). Duplicate
+  // names are allowed — the workflow id is the identity, not the name.
+  name: z.string().trim().min(1).max(120).optional(),
   description: z.string().max(1000).optional(),
   graph: z.unknown().optional(),
 });
@@ -63,9 +66,15 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   return NextResponse.json({ ok: true, validation });
 }
 
+/**
+ * Delete a workflow — but the BACKEND decides how. A workflow with published
+ * versions or run history is archived (audit preserved); a history-free draft is
+ * hard-deleted. The response reports which happened so the UI can say why. Only
+ * the flow_* tables are touched — never the legacy agent_flows system.
+ */
 export function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const db = getDb();
-  if (!db.flowWorkflows.get(params.id)) return NextResponse.json({ error: 'workflow not found' }, { status: 404 });
-  db.flowWorkflows.remove(params.id);
-  return NextResponse.json({ ok: true });
+  const outcome = removeOrArchiveWorkflow(db, params.id);
+  if (!outcome.ok) return NextResponse.json({ error: 'workflow not found' }, { status: 404 });
+  return NextResponse.json({ ok: true, mode: outcome.mode, reason: outcome.reason });
 }

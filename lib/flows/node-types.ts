@@ -4,10 +4,11 @@
  * it runnable. The canvas palette and node rendering read this. No DB / server
  * imports so it is safe to bundle to the client.
  *
- * Phase A builds the definition/persistence foundation only: no node executes
- * through the NEW engine yet (that is Phase C+). `executable: false` everywhere
- * is the truth today; each type advertises the phase that will light it up so
- * the UI never pretends an unsupported node works.
+ * `executable` reflects what the engine can actually run today: input/agent/output
+ * (Phase C) and decision/transform/parallel/join (Phase D) are true; approval (E),
+ * memory (F), and tool (later) remain false. Each type advertises the phase that
+ * lights it up so the UI never pretends an unsupported node works. The registry
+ * (`lib/flows/registry.ts`) is the runtime source of truth; this stays in sync.
  */
 import type { NodeType } from '@/lib/flows/schema';
 
@@ -35,7 +36,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'io',
     color: '#9aa0a6',
     icon: 'LogIn',
-    executable: false,
+    executable: true,
     runnablePhase: 'C',
     description: 'Provides the initial workflow data (text, JSON, URL, file).',
   },
@@ -45,7 +46,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'agent',
     color: '#4c8dff',
     icon: 'Bot',
-    executable: false,
+    executable: true,
     runnablePhase: 'C',
     description: 'Runs a configured IGRIS agent on its selected model.',
   },
@@ -65,7 +66,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'logic',
     color: '#ff9f45',
     icon: 'GitFork',
-    executable: false,
+    executable: true,
     runnablePhase: 'D',
     description: 'Conditional routing into named branches.',
   },
@@ -75,7 +76,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'human',
     color: '#ffd23f',
     icon: 'UserCheck',
-    executable: false,
+    executable: true,
     runnablePhase: 'E',
     description: 'Pauses the run until a human approves / rejects.',
   },
@@ -95,7 +96,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'transform',
     color: '#3fd0d6',
     icon: 'Shuffle',
-    executable: false,
+    executable: true,
     runnablePhase: 'D',
     description: 'Reshapes workflow data (select / map / merge / format).',
   },
@@ -105,7 +106,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'control',
     color: '#8ea0b6',
     icon: 'Split',
-    executable: false,
+    executable: true,
     runnablePhase: 'D',
     description: 'Fans out into parallel branches.',
   },
@@ -115,7 +116,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'control',
     color: '#8ea0b6',
     icon: 'Merge',
-    executable: false,
+    executable: true,
     runnablePhase: 'D',
     description: 'Synchronizes parallel branches back together.',
   },
@@ -125,7 +126,7 @@ export const NODE_TYPE_META: Record<NodeType, NodeTypeMeta> = {
     category: 'io',
     color: '#9aa0a6',
     icon: 'LogOut',
-    executable: false,
+    executable: true,
     runnablePhase: 'C',
     description: 'The final workflow result (display / save / draft / notify).',
   },

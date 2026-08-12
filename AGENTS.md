@@ -83,7 +83,8 @@ Then produce the change report described in `docs/CODING-METHODOLOGY.md § End-o
 | Run coordinator (in-process) | `lib/flows/coordinator.ts` |
 | Flow persistence (definition) | `lib/db.ts` repos `flowWorkflows`, `flowVersions` |
 | Run persistence | `lib/db.ts` repos `flowRuns`, `flowNodeRuns` |
-| Flow API | `app/api/flows/**` |
+| Human approval (Phase E) | `lib/db.ts` repo `flowApprovals`, `lib/flows/approvals.ts`, `lib/flows/executors/approval.ts`, engine `handleApproval`/`resumeRun`, `app/api/flow-approvals/**`, `components/ApprovalsInbox.tsx`, `app/approvals/page.tsx` |
+| Flow API | `app/api/flows/**`, `app/api/flow-approvals/**` |
 | Flow UI | `components/flows/FlowWorkspace.tsx`, `FlowCanvas.tsx` |
 | Models UI/API | `components/ModelsBoard.tsx`, `app/api/models/route.ts` |
 | Agent builder UI | `components/AgentBuilder.tsx` |
@@ -94,8 +95,8 @@ Then produce the change report described in `docs/CODING-METHODOLOGY.md § End-o
 
 ## Current status & next task
 
-- **Completed:** Phase A (workflow foundation) · Phase B (unified model runtime) · **Phase C (execution engine + Run Inspector)**.
-- **Next planned phase (do NOT start without instruction):** **Phase D — Logic nodes** (Decision, Transform, Parallel/Join, conditional edges, `{{Node.field}}` mapping). Start point: extend `resolveIncomingInputs` in `lib/flows/engine.ts` and the reserved `mapping`/`condition` fields on `WorkflowEdgeSchema` in `lib/flows/schema.ts`; register new executors via `lib/flows/executors/index.ts`.
+- **Completed:** Phase A–D · **Phase E — Human approval** (Human Approval node + durable pause/resume: `flow_approvals` table, `resumeWorkflowRun`, approve/reject API, Approvals inbox, canvas config; run status `waiting_approval`, node status `rejected`; approve/reject route like a Decision; resolution is idempotent and never re-runs succeeded nodes; Hermes-native approval continuation deferred, never auto-approved) · **HRA-2 H0** (serve spike) · **H1** (HermesClient seam) · **H2** (HermesRuntimeManager) · **HRA-2 H3** (serve is a SELECTABLE, eligibility-gated production transport — **default stays ACP**, no silent fallback; live-validated incl. the Gmail workflow. GO WITH CONDITIONS).
+- **Immediate next (do NOT start without instruction):** either **Phase F — Memory (G-Brain read/write nodes)** or advance **HRA-2 H4** (remote Hermes: tunnel/auth) / resolve the H3 conditions (MCP/skills parity, persistent-memory isolation). Do NOT make serve the default for new users yet. `getHermesClient(db)` chooses the transport from `meta.hermes_production_transport` (default `acp`); ACP + INC-005 protections stay as rollback. Approval follow-ons NOT yet built (do not start unrequested): approval expiry/TTL (the `expired` status is defined but unused), an auth layer (resolver actor is hard-coded `local_operator`), and Hermes-session approval continuation. See `docs/PHASE-STATUS.md` + `docs/DECISIONS.md` D17–D20.
 
 ## What NOT to do
 

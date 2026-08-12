@@ -2,6 +2,7 @@ import { getDb } from '@/lib/data';
 import { PageHeader } from '@/components/PageHeader';
 import { ResetWorkspace } from '@/components/ResetWorkspace';
 import { BrainSettings } from '@/components/BrainSettings';
+import { HermesRuntimeSettings } from '@/components/HermesRuntimeSettings';
 import { Label } from '@/components/terminal';
 import { activeLlmProviderName } from '@/lib/connectors/llm';
 import { readEnvLocal } from '@/lib/creds';
@@ -44,6 +45,8 @@ export default function SettingsPage() {
       </div>
 
       <BrainSettings initialProvider={brainProvider} initialHermesBin={hermesBin} />
+
+      <HermesRuntimeSettings />
 
       <ResetWorkspace demoCleared={demoCleared} />
     </div>

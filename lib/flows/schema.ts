@@ -11,6 +11,7 @@
  * can all share them.
  */
 import { z } from 'zod';
+import { ConditionSchema } from '@/lib/flows/conditions';
 
 export const NODE_TYPES = [
   'input',
@@ -38,17 +39,57 @@ export const AgentConfigSchema = z.object({
   model: z.string().optional(),
 });
 export const ToolConfigSchema = z.object({ toolSlug: z.string().optional() });
-export const DecisionConfigSchema = z.object({
-  branches: z.array(z.object({ name: z.string().min(1), expression: z.string().min(1) })).default([]),
+/**
+ * Decision (Phase D): an ordered rule list evaluated FIRST-MATCH (spec §55). Each
+ * rule names the route it selects when its condition is true; `defaultRoute` is
+ * the fallback when nothing matches. Edges leaving a decision reference the route
+ * via `sourceHandle` (spec §13). `config:{}` parses to an empty rule list.
+ */
+export const DecisionRuleSchema = z.object({
+  route: z.string().min(1),
+  condition: ConditionSchema,
 });
-export const ApprovalConfigSchema = z.object({ note: z.string().optional() });
+export const DecisionConfigSchema = z.object({
+  rules: z.array(DecisionRuleSchema).default([]),
+  defaultRoute: z.string().optional(),
+});
+/**
+ * Human Approval node (Phase E). A human gate, kept strictly separate from the
+ * machine-logic Decision node. `message` may use `{{Node.field}}` references
+ * (resolved by the SAME references.ts resolver — no new parser). `approveRoute`
+ * / `rejectRoute` are source-handle labels: approve activates ONLY the approve
+ * edge, reject ONLY the reject edge (routes exactly like a Decision).
+ */
+export const ApprovalConfigSchema = z.object({
+  title: z.string().max(200).default('Human approval required'),
+  message: z.string().max(4000).default(''),
+  approveRoute: z.string().min(1).max(80).default('approve'),
+  rejectRoute: z.string().min(1).max(80).default('reject'),
+  approveLabel: z.string().max(80).default('Approve'),
+  rejectLabel: z.string().max(80).default('Reject'),
+  /** Names of upstream references to snapshot into the approver's context view. */
+  contextFields: z.array(z.string().max(200)).max(20).default([]),
+});
 export const MemoryConfigSchema = z.object({
   mode: z.enum(['search', 'read', 'write', 'update']).default('search'),
   write: z.boolean().default(false),
 });
-export const TransformConfigSchema = z.object({ expression: z.string().default('') });
-export const ParallelConfigSchema = z.object({});
-export const JoinConfigSchema = z.object({});
+/**
+ * Transform (Phase D): a declarative, code-free reshape (spec §19/§21).
+ *  - `object`   → build an object from `{ key: "{{ref}}" }` (values type-preserved)
+ *  - `template` → produce text from a `{{ref}}` string
+ *  - `field`    → pass a single reference through
+ */
+export const TransformConfigSchema = z.object({
+  mode: z.enum(['object', 'template', 'field']).default('object'),
+  object: z.record(z.string(), z.string()).optional(),
+  template: z.string().optional(),
+  field: z.string().optional(),
+});
+/** Parallel (Phase D): a control fan-out; optional labels name the outgoing branches (spec §45). */
+export const ParallelConfigSchema = z.object({ branches: z.array(z.string()).optional() });
+/** Join (Phase D): v1 waits for ALL active incoming branches (spec §26). */
+export const JoinConfigSchema = z.object({ mode: z.enum(['all']).default('all') });
 export const OutputConfigSchema = z.object({
   mode: z.enum(['display', 'save', 'draft', 'notify']).default('display'),
 });
@@ -72,6 +113,8 @@ const nodeBase = {
   x: z.number(),
   y: z.number(),
   label: z.string().max(120).optional(),
+  /** Optional author note shown in the inspector; carried on every node type. */
+  description: z.string().max(500).optional(),
 };
 const nodeOf = <T extends NodeType>(type: T, config: z.ZodTypeAny) =>
   z.object({ ...nodeBase, type: z.literal(type), config });
@@ -90,19 +133,29 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
 
+/**
+ * Edge data mapping (Phase D, spec §7). `all` (the Phase-A/B/C default) passes the
+ * whole upstream output; `field`/`template`/`object` resolve `{{Node.field}}`
+ * references. Legacy edges with `mapping:{ mode:'all' }` (or no mapping) are
+ * unchanged.
+ */
 export const EdgeMappingSchema = z.object({
-  mode: z.enum(['all', 'field', 'template']).default('all'),
+  mode: z.enum(['all', 'field', 'template', 'object']).default('all'),
   field: z.string().optional(),
   template: z.string().optional(),
+  object: z.record(z.string(), z.string()).optional(),
 });
 export const WorkflowEdgeSchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
   target: z.string().min(1),
+  /** For decision routing: the source route this edge leaves from (spec §13). */
   sourceHandle: z.string().nullable().optional(),
+  /** Stable branch label used by Join to key its inputs (spec §25). */
   targetHandle: z.string().nullable().optional(),
   mapping: EdgeMappingSchema.default({ mode: 'all' }),
-  condition: z.string().optional(),
+  /** Optional conditional edge (spec §16). Same evaluator as Decision. */
+  condition: ConditionSchema.optional(),
 });
 export type WorkflowEdge = z.infer<typeof WorkflowEdgeSchema>;
 

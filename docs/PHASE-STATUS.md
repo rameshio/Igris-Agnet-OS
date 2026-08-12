@@ -30,11 +30,39 @@
 - **Decisions:** run an immutable version (never a draft); runtime state never written into graph JSON; workflow output NOT auto-saved to G-Brain; polling not WebSockets; active-run registry pinned to `globalThis` (Next bundles routes separately).
 - **Limitations:** sequential; only Input/Agent/Output executable; no fallback/retry/cancel; Hermes usage not captured (tokens null); stale runs reconciled to `interrupted` on read.
 
+### Phase D — Logic nodes, mapping, branching, Parallel/Join ✅ complete
+- **Purpose:** turn the Phase-C executable DAG into a real logic engine (structured data flow + branching) without replacing the engine.
+- **Major changes:** canonical `{{Node.field}}` reference/template resolver (`references.ts`, prototype-pollution-safe, no `eval`); one condition schema + evaluator shared by Decision nodes and conditional edges (`conditions.ts`); node input resolution over ACTIVE edges with `all`/`field`/`template`/`object` mappings (`inputs.ts`); executable `Transform` (declarative reshape), `Decision` (first-match routes + default), `Parallel` (fan-out), `Join` (wait-for-all-active-branches); active-edge scheduler with skip-vs-fail and unreachable-node skipping; validator Phase-D checks; canvas node/edge inspectors + Run Inspector routes/skip.
+- **Files:** `lib/flows/{references,conditions,inputs}.ts`, `lib/flows/executors/{transform,decision,parallel,join}.ts`, `components/flows/InspectorPanel.tsx`; modified `lib/flows/{schema,engine,registry,validator,node-types}.ts`, `executors/{index,agent}.ts`, `components/flows/FlowCanvas.tsx`.
+- **DB:** none — logic lives in the version graph JSON; runtime detail in existing `flow_node_runs` JSON.
+- **Decisions:** first-match exclusive Decision routing; ALL true conditional edges activate (Decision for exclusive); one condition evaluator; sequential Parallel (deterministic > concurrent); Join keys branches by stable label; missing references fail clearly (never silent-empty).
+- **Limitations:** sequential execution; static ref validation checks the reference root only; optional/default reference values deferred (Phase G-ish).
+
+### Phase E — Human Approval + durable pause/resume ✅ complete
+- **Purpose:** let a workflow pause for a human, durably, and resume exactly where it stopped — without re-running any completed work. A human GATE, separate from the machine-logic Decision node.
+- **Major changes:** `Human Approval` node type made runnable (engine-intercepted `approvalExecutor`); the engine gained a resumable scheduler — `handleApproval` opens a `pending` `flow_approvals` row and pauses (`waiting_approval`), `resumeRun(runId)` rebuilds `state`/`status` from persisted node runs and applies the human decision; Approval routes like a Decision (approve/reject `sourceHandle`); a rejection is a distinct `rejected` node status, NOT a failed run; idempotent conditional resolve (approve-twice = one execution); `resumeRunBg` reuses the `globalThis` active set as a resume lock; reconciler still ignores `waiting_approval` (survives restart). Approvals inbox page + Run Inspector waiting/resolved states + canvas approval config; Hermes approval events stay `hermes_approval_required` (never auto-answered; session continuation deferred).
+- **Files:** `lib/flows/approvals.ts`, `lib/flows/executors/approval.ts`, `app/api/flow-approvals/**`, `components/ApprovalsInbox.tsx`, `app/approvals/page.tsx`; modified `lib/db.ts` (repo `flowApprovals`), `lib/flows/{run-types,schema,engine,coordinator,node-types}.ts`, `lib/flows/executors/index.ts`, `components/flows/{FlowCanvas,InspectorPanel}.tsx`, `app/api/flows/runs/[runId]/route.ts`, `lib/nav.ts`, `lib/connectors/hermes-serve.ts`.
+- **DB:** additive `flow_approvals` table + 3 indexes (`CREATE TABLE IF NOT EXISTS`); run status gained `waiting_approval`, node status gained `rejected`. `context_json` is non-secret only. No existing table/column changed; immutable versions untouched.
+- **Decisions:** see `docs/DECISIONS.md` D20 (durable gate separate from Decision; approve/reject routing; no upstream rerun; idempotency + resume lock; backend-authoritative endpoints; Hermes continuation deferred).
+- **Limitations:** no approval expiry/TTL (`expired` status defined but unused); no auth layer (resolver actor `local_operator`); Hermes-session approval continuation deferred; sequential execution unchanged.
+
+## HRA-2 — Hermes Runtime Architecture V2 (runs alongside the product phases)
+
+A staged migration of the Hermes integration from the ACP stdio process toward Hermes's own
+`serve` (WS + JSON-RPC) runtime. The review recommends H1–H3 land **before Phase E**.
+
+- **H0 — serve protocol/capability spike** ✅ — verified `hermes serve` v0.20.0 live (transport, health, sessions, streaming, cancel+recovery, multi-client, tools, memory). Decision: **GO WITH CONDITIONS**.
+- **H1 — HermesClient seam + serve test spike** ✅ (LIVE) — `lib/connectors/hermes-client.ts` (`chat`/`health`/`capabilities`, tri-state) wraps the active brain (ACP in prod, zero behavior change); the ModelRouter `hermes` path calls it. Test-only `lib/connectors/hermes-serve.ts` implements the H0 serve protocol against a fake fixture. **ACP remains primary; serve is disabled.**
+- **H2 — runtime discovery/health/lifecycle** ✅ (LIVE) — `HermesRuntimeManager` (`lib/connectors/hermes-runtime.ts`): binary discovery (validated by `--version`), `/api/status` health, runtime state/mode/ownership, PID-exact managed start/stop (never `serve --stop`/external). `GET/POST /api/settings/hermes-runtime` + Settings ▸ Hermes Runtime panel. Non-secret config in `meta`; token in `.env.local` only. **Still ACP transport.**
+- **H3 — serve as a SELECTABLE production transport** ✅ (GO WITH CONDITIONS, live-validated) — `getHermesClient(db)` selects serve vs the active brain from `meta.hermes_production_transport` (default `acp`); eligibility-gated flip; **no silent fallback**; one isolated session per node run; bounded concurrency (default 3); layered timeouts + interrupt; approval events → `hermes_approval_required`. Live: Gmail workflow succeeded (~114s) with the health channel healthy throughout, Transform/Output ran, no ACP poisoning; ACP rollback works. **Serve is NOT the default** — ACP remains default.
+- **H4 — remote Hermes · H5 — retire ACP as app transport** ▶ next / ○.
+
+**Conditions before serve could become a default (H4+):** MCP-specific execution over serve not isolated (server-side tools incl. real email DID run) → MCP partial; skills `unverified`; persistent-memory isolation via a dedicated Hermes profile is a pending product decision; true-parallel confirmed (sessions independent).
+
 ## Planned phases (NOT built — do not implement unless instructed)
 
-- **Phase D — Logic nodes:** Decision/router, Transform, Parallel/Join, conditional edges + `{{Node.field}}` mapping. Start: extend `resolveIncomingInputs` (`lib/flows/engine.ts`) + `WorkflowEdgeSchema.mapping/condition` (`lib/flows/schema.ts`).
-- **Phase E — Human approval:** approval node, durable pause/resume, approval table + endpoints, destructive-action gates. (`NodeRunStatus` already reserves `waiting_approval`; `RunStatus` can reserve it too.)
 - **Phase F — Memory:** explicit G-Brain read/write nodes, controlled knowledge promotion. (Still: no auto-save.)
+- **Phase E follow-ons (NOT built):** approval expiry/TTL, an auth layer (resolver actor is `local_operator`), Hermes-session approval continuation, and using the Human Approval node to gate destructive/external actions inside executors.
 - **Phase G — Reliability:** retries, error routes, recorded model fallback, cancellation, workflow recovery, versioning polish.
 
 ## Feature status matrix
@@ -58,8 +86,12 @@
 | Input → Agent → Output execution | LIVE (Phase C) | `lib/flows/engine.ts`, `executors/*` | Sequential, DAG |
 | Run persistence + Run Inspector | LIVE (Phase C) | `flow_runs`/`flow_node_runs`, `FlowCanvas.tsx` | Poll ~1s |
 | Canvas run-status overlay | LIVE (Phase C) | `FlowCanvas.tsx` | From run state, not definition |
-| Decision / Transform / Parallel / Join | PLANNED Phase D | node types exist, not executable | Rejected pre-run |
-| Human approval | PLANNED Phase E | — | `waiting_approval` reserved |
+| Decision / Transform / Parallel / Join | LIVE (Phase D) | `lib/flows/executors/{decision,transform,parallel,join}.ts` | Machine logic; deterministic |
+| `{{Node.field}}` references + templates | LIVE (Phase D) | `lib/flows/references.ts` | Safe path lookup, no eval, proto-guarded |
+| Condition evaluator (Decision + edges) | LIVE (Phase D) | `lib/flows/conditions.ts` | One evaluator; 14 operators |
+| Edge mapping (all/field/template/object) | LIVE (Phase D) | `lib/flows/inputs.ts`, `schema.ts` | Type-preserving whole-refs |
+| Conditional edges + skip-vs-fail | LIVE (Phase D) | `lib/flows/engine.ts` | Active-edge scheduler |
+| Human approval (durable pause/resume) | LIVE (Phase E) | `lib/flows/{approvals,engine}.ts`, `flow_approvals`, `app/api/flow-approvals/*`, `ApprovalsInbox.tsx` | Idempotent; survives restart; no upstream rerun; routes like Decision |
 | Memory nodes | PLANNED Phase F | — | No auto-save today |
 | Retries / error routes / cancel | PLANNED Phase G | — | Fail-fast only today |
 | Legacy Agent Flow canvas + API | LEGACY | `AgentFlowCanvas.tsx`, `/api/agent-flows`, `flow-run.ts` | Kept for compat; not surfaced on `/brain` |
@@ -81,6 +113,10 @@
 13. **Legacy flow code remains** until explicitly retired (see `LEGACY.md`).
 14. Unsupported future node types **must not pretend to execute** — they are rejected pre-run and labeled with their phase.
 15. **Model fallback must never happen silently** (and is not implemented yet).
-16. Destructive/external actions will require **human approval** when Phase E lands; do not add unattended destructive side effects to executors before then.
+16. A **Human Approval** node pauses a run durably (`waiting_approval`) and resumes via `resumeWorkflowRun` on an immutable version WITHOUT re-running succeeded nodes; resolution is idempotent (conditional `WHERE status='pending'`) and backend-authoritative (client sends only id+decision+note). Nothing auto-approves — not Approval nodes, not Hermes `approval/sudo/secret.request`. A `waiting_approval` run must never be reconciled to `interrupted`. (Using approval to gate destructive executor side effects is a Phase-E follow-on, not yet built — still do not add unattended destructive side effects.)
 17. Use the **repository layer**; pages/routes never touch SQLite directly.
 18. Use the **executor registry** and the **ModelRouter**; do not scatter `switch (node.type)` or per-provider calls.
+19. **One reference resolver** (`references.ts`) and **one condition evaluator** (`conditions.ts`) — never a second `{{...}}` parser or condition engine. No `eval`/`Function`/dynamic code in workflow logic.
+20. **Missing references fail clearly** (`workflow_reference_not_found`) — never silently substitute empty/undefined. Reference lookup is read-only and rejects `__proto__`/`prototype`/`constructor`.
+21. **Decision is machine logic** (deterministic, no LLM by default); Human Approval (Phase E) is the separate human gate. A node reachable by no ACTIVE edge is **skipped, not failed**; a node that errors while executing is **failed**.
+22. **Transform is declarative only** — data reshape via references; never arbitrary scripting.

@@ -20,8 +20,10 @@ export default function FlowsPage() {
         <a href="/brain" className="text-os-text underline underline-offset-2">
           /brain
         </a>
-        . Phase A ships the workflow foundation: create and version workflows, place typed nodes, and
-        wire them. Node execution arrives in later phases — unsupported nodes are clearly marked.
+        . Create and version workflows, place typed nodes, and wire them. Input, AI Agent, Output,
+        Transform, Decision, Parallel, and Join nodes execute on published versions — with structured
+        field mapping, <code>{'{{Node.field}}'}</code> references, and conditional branching. Human
+        Approval and Memory nodes are clearly marked as not yet runnable.
       </p>
       <FlowWorkspace agents={agents} />
     </div>

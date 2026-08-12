@@ -127,8 +127,9 @@ describe('WorkflowEngine (Phase C)', () => {
     const okGraph = { nodes: [input('i'), agent('ag', 'A'), output('o')], edges: [edge('e1', 'i', 'ag'), edge('e2', 'ag', 'o')] };
     expect(validateExecutable(okGraph, { agentIds: new Set(['A']) }).ok).toBe(true);
 
-    const decision = { nodes: [input('i'), { id: 'd', type: 'decision', x: 0, y: 0, config: { branches: [] } }, output('o')], edges: [edge('e1', 'i', 'd'), edge('e2', 'd', 'o')] };
-    const r = validateExecutable(decision, {});
+    // memory remains unsupported until Phase F (approval became executable in Phase E)
+    const memory = { nodes: [input('i'), { id: 'mem', type: 'memory', x: 0, y: 0, config: {} }, output('o')], edges: [edge('e1', 'i', 'mem'), edge('e2', 'mem', 'o')] };
+    const r = validateExecutable(memory, {});
     expect(r.ok).toBe(false);
     expect(r.issues.some((i) => i.code === 'unsupported_node_type')).toBe(true);
 

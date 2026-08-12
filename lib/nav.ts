@@ -19,6 +19,7 @@ import {
   Workflow,
   Map,
   Plug,
+  CheckSquare,
   BarChart3,
   LayoutGrid,
   Layers,
@@ -49,6 +50,7 @@ export const NAV_AGENTS: NavItem[] = [
 export const NAV_INTELLIGENCE: NavItem[] = [
   { href: '/brain', label: 'G-Brain', icon: Brain },
   { href: '/flows', label: 'Flows', icon: Workflow },
+  { href: '/approvals', label: 'Approvals', icon: CheckSquare },
   { href: '/models', label: 'Models', icon: Cpu },
 ];
 

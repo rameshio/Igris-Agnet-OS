@@ -35,13 +35,19 @@ COMPLETED PHASES (do not redo or undo):
 - Phase C — Execution engine + Run Inspector (Input/Agent/Output execute
   through the engine + ModelRouter; flow_runs/flow_node_runs persistence;
   in-process coordinator + polling; Run Inspector + canvas status overlay).
+- Phase D — Logic engine (references lib/flows/references.ts; one condition
+  evaluator lib/flows/conditions.ts for Decision + conditional edges; edge
+  mapping all/field/template/object lib/flows/inputs.ts; Transform/Decision/
+  Parallel/Join executors; active-edge scheduler with skip-vs-fail in
+  lib/flows/engine.ts; canvas node/edge inspectors). No new DB tables.
 
 CURRENT NEXT PHASE (do NOT start until the human explicitly approves it):
-- Phase D — Logic nodes: Decision/router, Transform, Parallel/Join,
-  conditional edges, {{Node.field}} mapping.
-  Start point: extend resolveIncomingInputs in lib/flows/engine.ts and the
-  reserved mapping/condition fields on WorkflowEdgeSchema in
-  lib/flows/schema.ts; register new executors via lib/flows/executors/index.ts.
+- Phase E — Human approval: approval node, durable pause/resume, approval UI +
+  table (flow_approvals) + endpoints, destructive-action gates.
+  Notes: NodeRunStatus already reserves waiting_approval. Decision (machine
+  logic, Phase D) and Human Approval (human gate, Phase E) are SEPARATE — do not
+  merge them. Do NOT reuse the legacy lib/agents/flow-run.ts engine (it
+  auto-writes to G-Brain). Reuse the executor registry + engine, don't replace.
 
 HARD RULES (from AGENTS.md / docs/PHASE-STATUS.md invariants):
 - Inspect before modifying; reuse abstractions; do not rewrite from scratch.

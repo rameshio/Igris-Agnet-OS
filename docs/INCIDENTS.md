@@ -56,6 +56,19 @@ Rollback/Recovery · Preventive action
 
 ---
 
+### INC-005 — Hermes ACP timeout poisoned the persistent process
+- **Severity:** SEV-2 · **Status:** Resolved · **Area:** `lib/connectors/hermes-acp.ts` (Hermes brain runtime).
+- **Summary:** Running a tool-using agent (Gmail Worker) in a `/flows` workflow, the Agent node failed after ~181s with `hermes_unavailable: Hermes ACP timed out`. Failure propagation was correct (Agent failed → Transform/Output skipped → run failed), but the persistent ACP process was left **busy on the abandoned turn**, so subsequent Hermes requests could also stall/time out until that work finished on its own.
+- **Impact:** One slow/timed-out prompt could cascade into repeated timeouts for later runs — the shared Hermes process appeared "hung."
+- **Detection:** User manual test during Phase D verification.
+- **Root cause:** On a per-prompt timeout, `promptOnce` abandoned the in-flight `session/prompt` without (a) sending ACP `session/cancel` to stop Hermes' abandoned turn, or (b) removing the leaked entry from the `pending` correlation map / clearing its `setTimeout`. Prompts are serialized over ONE shared ACP process and Hermes processes one agent turn at a time, so the abandoned turn kept the process busy and the next queued prompt stalled behind it. Secondary: the losing timer was never cleared (dangling timers), and `initialize`/`session/new` had no timeout (a hung setup would hang forever instead of surfacing).
+- **Resolution:** On timeout, send `session/cancel {sessionId}` (frees the process) and `cleanupPending(promptId)` (drops the leak); always clear the timer; bound the setup requests with a timeout; add safe diagnostics (request id, session id, elapsed ms, timeout ms, process-alive, reason — never prompts/keys). The `hermes` strategy still throws `hermes_unavailable` with **no silent fallback**.
+- **Files changed:** `lib/connectors/hermes-acp.ts`. Added `tests/fixtures/fake-hermes-acp.mjs` + `tests/hermes-acp.test.ts`.
+- **Tests added:** a fake single-turn-busy ACP agent + a regression asserting: a normal prompt succeeds → a hung prompt times out explicitly → a later prompt still succeeds (recovery). It reproduces the bug (step 3 timed out) before the fix and passes after.
+- **Data/Security impact:** none. Diagnostics log only safe metadata.
+- **Rollback/Recovery:** revert the connector change (reintroduces the poisoning). Forward-fix preferred.
+- **Preventive action:** In-flight external work MUST be cancelled on timeout, and correlation maps cleaned, so a shared long-lived process is never left in a stale-busy state. The 181s figure suggests the default 180s may be tight for cold, tool-using agents — tune via `HERMES_ACP_TIMEOUT_MS` (a config choice, not a silent default change).
+
 ### INC-004 — Canvas "Delete" removed the underlying agent everywhere
 - **Severity:** SEV-3 · **Status:** Resolved · **Area:** flow/agent canvas UX.
 - **Summary:** Deleting a node from the canvas called `DELETE /api/agents/:id`, permanently removing the agent from the whole app (not just the canvas).

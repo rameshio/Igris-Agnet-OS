@@ -27,6 +27,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'brain', load: () => import('@/app/api/brain/route'), url: 'http://localhost/api/brain' },
   { route: 'models', load: () => import('@/app/api/models/route'), url: 'http://localhost/api/models' },
   { route: 'flows', load: () => import('@/app/api/flows/route'), url: 'http://localhost/api/flows' },
+  { route: 'flow-approvals', load: () => import('@/app/api/flow-approvals/route'), url: 'http://localhost/api/flow-approvals' },
   { route: 'brain/graph', load: () => import('@/app/api/brain/graph/route'), url: 'http://localhost/api/brain/graph' },
   { route: 'brain/overview', load: () => import('@/app/api/brain/overview/route'), url: 'http://localhost/api/brain/overview' },
   { route: 'comms', load: () => import('@/app/api/comms/route'), url: 'http://localhost/api/comms' },
@@ -82,7 +83,11 @@ describe('platform smoke — every GET API route answers 200 with JSON', () => {
     // a slug on disk), so it is not a 200-required smoke route. flows/[id] and
     // flows/[id]/versions likewise 404 without a real workflow id — they are
     // covered by the dedicated flows repo/route tests instead.
-    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]']);
+    // settings/hermes-runtime GET probes the real Hermes binary + serve endpoint
+    // (environment-dependent, slow, may launch the Hermes CLI), so it is not a
+    // 200-required smoke route — it is covered by tests/hermes-runtime.test.ts.
+    // flow-approvals/[id] GET 404s without a real approval id — covered by tests/flow-approvals.test.ts.
+    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime']);
     const discovered = discoverGetRoutes(path.join(process.cwd(), 'app', 'api')).filter((r) => !IGNORE.has(r)).sort();
     const covered = ROUTES.map((r) => r.route).sort();
     expect(covered).toEqual(discovered);

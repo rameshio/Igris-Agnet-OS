@@ -46,17 +46,19 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { NODE_TYPE_META, NODE_TYPE_LIST } from '@/lib/flows/node-types';
-import type { NodeType, WorkflowGraph, WorkflowNode } from '@/lib/flows/schema';
+import type { NodeType, WorkflowGraph, WorkflowNode, WorkflowEdge } from '@/lib/flows/schema';
 import { parseModelSettings, describeModel } from '@/lib/models/settings';
 import { providerById } from '@/lib/models/catalog';
+import { NodeInspector, EdgeInspector, type EdgeData } from '@/components/flows/InspectorPanel';
+import { shouldDeleteSelection, isEditableTarget } from '@/lib/flows/graph-ops';
 
 const ICONS: Record<string, LucideIcon> = {
   Bot, Wrench, GitFork, UserCheck, Database, Shuffle, Split, Merge, LogIn, LogOut,
 };
 
 type AgentOption = { id: string; name: string; model?: string };
-type RunNodeStatus = 'idle' | 'queued' | 'running' | 'success' | 'failed' | 'skipped';
-type WFNodeData = { nodeType: NodeType; label?: string; config: Record<string, unknown>; agentName?: string; agentModel?: string; status?: RunNodeStatus };
+type RunNodeStatus = 'idle' | 'queued' | 'running' | 'success' | 'failed' | 'skipped' | 'waiting_approval' | 'rejected';
+type WFNodeData = { nodeType: NodeType; label?: string; description?: string; config: Record<string, unknown>; agentName?: string; agentModel?: string; status?: RunNodeStatus };
 type WFNode = Node<WFNodeData>;
 
 const RUN_DOT: Record<RunNodeStatus, string> = {
@@ -66,6 +68,8 @@ const RUN_DOT: Record<RunNodeStatus, string> = {
   success: 'bg-os-ok',
   failed: 'bg-os-err',
   skipped: 'bg-os-dim opacity-50',
+  waiting_approval: 'bg-os-warn animate-pulse',
+  rejected: 'bg-os-err opacity-70',
 };
 
 /** Human model badge for an agent, derived from the agent's stored model string. */
@@ -81,10 +85,21 @@ function defaultConfig(type: NodeType): Record<string, unknown> {
     case 'input': return { value: '', format: 'text' };
     case 'memory': return { mode: 'search', write: false };
     case 'output': return { mode: 'display' };
-    case 'decision': return { branches: [] };
-    case 'transform': return { expression: '' };
+    case 'decision': return { rules: [], defaultRoute: '' };
+    case 'transform': return { mode: 'object', object: {} };
+    case 'join': return { mode: 'all' };
+    case 'approval': return { title: 'Human approval required', message: '', approveRoute: 'approve', rejectRoute: 'reject', approveLabel: 'Approve', rejectLabel: 'Reject', contextFields: [] };
     default: return {};
   }
+}
+
+/** Short canvas label for an edge, showing its route / mapping / condition at a glance. */
+function edgeBadge(data: EdgeData): string | undefined {
+  const parts: string[] = [];
+  if (data.route) parts.push(`▶ ${data.route}`);
+  if (data.mapping && data.mapping.mode !== 'all') parts.push(data.mapping.mode);
+  if (data.condition) parts.push('if…');
+  return parts.length ? parts.join(' · ') : undefined;
 }
 
 /** One node renderer for every type — category color + icon + text, never color alone. */
@@ -138,20 +153,32 @@ function graphToRF(graph: WorkflowGraph, findAgent: (id: string) => AgentOption 
       data: {
         nodeType: n.type,
         label: n.label,
+        description: n.description,
         config: n.config as Record<string, unknown>,
         agentName: agent?.name,
         agentModel: agent ? agentModelBadge(agent.model) : undefined,
       },
     };
   });
-  const edges: Edge[] = (graph.edges ?? []).map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    sourceHandle: e.sourceHandle ?? undefined,
-    targetHandle: e.targetHandle ?? undefined,
-    animated: true,
-  }));
+  const edges: Edge[] = (graph.edges ?? []).map((e) => {
+    const data: EdgeData = {
+      mapping: e.mapping as EdgeData['mapping'],
+      condition: e.condition,
+      route: e.sourceHandle ?? undefined,
+      branchLabel: e.targetHandle ?? undefined,
+    };
+    return {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      // Our nodes expose single unnamed handles; route/branch labels live in `data`.
+      animated: true,
+      label: edgeBadge(data),
+      labelBgStyle: { fill: 'var(--surface)' },
+      labelStyle: { fontSize: 9, fill: 'var(--muted)' },
+      data,
+    };
+  });
   return { nodes, edges };
 }
 
@@ -159,16 +186,20 @@ function rfToGraph(nodes: WFNode[], edges: Edge[]): WorkflowGraph {
   return {
     nodes: nodes.map(
       (n): WorkflowNode =>
-        ({ id: n.id, type: n.data.nodeType, x: Math.round(n.position.x), y: Math.round(n.position.y), label: n.data.label, config: n.data.config }) as WorkflowNode,
+        ({ id: n.id, type: n.data.nodeType, x: Math.round(n.position.x), y: Math.round(n.position.y), label: n.data.label, description: n.data.description, config: n.data.config }) as WorkflowNode,
     ),
-    edges: edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      sourceHandle: e.sourceHandle ?? null,
-      targetHandle: e.targetHandle ?? null,
-      mapping: { mode: 'all' as const },
-    })),
+    edges: edges.map((e): WorkflowEdge => {
+      const data = (e.data as EdgeData | undefined) ?? {};
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: data.route ?? null,
+        targetHandle: data.branchLabel ?? null,
+        mapping: data.mapping ?? { mode: 'all' as const },
+        condition: data.condition,
+      };
+    }),
   };
 }
 
@@ -176,7 +207,7 @@ type NodeRunView = {
   id: string;
   nodeId: string;
   nodeType: string;
-  status: RunNodeStatus | 'waiting_approval';
+  status: RunNodeStatus;
   providerId: string | null;
   modelId: string | null;
   modelStrategy: string | null;
@@ -188,11 +219,25 @@ type NodeRunView = {
   errorCode: string | null;
   errorMessage: string | null;
   input: unknown;
-  output: { text?: string } | null;
+  output: { text?: string; data?: unknown } | null;
+};
+type ApprovalView = {
+  id: string;
+  nodeId: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
+  title: string;
+  message: string;
+  approvalRoute: string;
+  rejectionRoute: string;
+  requestedAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
 };
 type RunView = {
   run: { id: string; status: string; workflowVersion: number; totalTokens: number | null; startedAt: string | null; endedAt: string | null; errorCode: string | null; errorMessage: string | null };
   nodeRuns: NodeRunView[];
+  approvals?: ApprovalView[];
   finalOutput: { text?: string } | null;
 };
 type RunListItem = { id: string; status: string; workflowVersion: number; startedAt: string | null; endedAt: string | null };
@@ -227,11 +272,72 @@ export function FlowCanvas({
   const [run, setRun] = useState<RunView | null>(null);
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [selNode, setSelNode] = useState<string | null>(null);
+  const [editNode, setEditNode] = useState<string | null>(null);
+  const [editEdge, setEditEdge] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [apprNote, setApprNote] = useState('');
+  const [resolving, setResolving] = useState(false);
 
   const onConnect = useCallback(
     (c: Connection) => {
-      setEdges((eds) => addEdge({ ...c, id: uid('e'), animated: true }, eds));
+      setEdges((eds) => addEdge({ ...c, id: uid('e'), animated: true, data: { mapping: { mode: 'all' } } }, eds));
+      setDirty(true);
+    },
+    [setEdges],
+  );
+
+  // Design-time editing: patch a node's config / label, or an edge's data.
+  const patchNodeConfig = useCallback(
+    (nodeId: string, config: Record<string, unknown>) => {
+      setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, config } } : n)));
+      setDirty(true);
+    },
+    [setNodes],
+  );
+  const patchNodeLabel = useCallback(
+    (nodeId: string, label: string) => {
+      setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, label: label || undefined } } : n)));
+      setDirty(true);
+    },
+    [setNodes],
+  );
+  const patchNodeDescription = useCallback(
+    (nodeId: string, description: string) => {
+      setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, description: description || undefined } } : n)));
+      setDirty(true);
+    },
+    [setNodes],
+  );
+  // Delete a node from the DRAFT (never a published version): drop the node AND
+  // every edge connected to it, so no dangling edges remain. Close its inspector.
+  const deleteNode = useCallback(
+    (nodeId: string) => {
+      setNodes((ns) => ns.filter((n) => n.id !== nodeId));
+      setEdges((es) => es.filter((e) => e.source !== nodeId && e.target !== nodeId));
+      setEditNode((cur) => (cur === nodeId ? null : cur));
+      setSelNode((cur) => (cur === nodeId ? null : cur));
+      setDirty(true);
+      setSaved(false);
+    },
+    [setNodes, setEdges],
+  );
+
+  // Keyboard delete: Delete/Backspace removes the inspector-selected node — but
+  // only when the user is NOT typing in a text field (guarded by isEditableTarget),
+  // so Backspace edits text inside the inspector instead of nuking the node.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!editNode) return;
+      if (!shouldDeleteSelection({ key: e.key, editing: isEditableTarget(document.activeElement) })) return;
+      e.preventDefault();
+      deleteNode(editNode);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [editNode, deleteNode]);
+  const patchEdgeData = useCallback(
+    (edgeId: string, data: EdgeData) => {
+      setEdges((es) => es.map((e) => (e.id === edgeId ? { ...e, data, label: edgeBadge(data) } : e)));
       setDirty(true);
     },
     [setEdges],
@@ -364,9 +470,49 @@ export function FlowCanvas({
     setRunId(id);
   };
 
+  // Resolve a pending Human Approval, then immediately refresh the run so the UI
+  // reflects the resume without waiting for the next poll tick. The backend
+  // resolves everything from the approval id — we send only the decision + note.
+  const resolveApproval = async (approvalId: string, decision: 'approve' | 'reject') => {
+    setResolving(true);
+    const res = await fetch(`/api/flow-approvals/${approvalId}/${decision}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: apprNote.trim() || undefined }),
+    }).catch(() => null);
+    setResolving(false);
+    if (!res?.ok) {
+      setNote('Failed to resolve approval.');
+      return;
+    }
+    setApprNote('');
+    const runRes = await fetch(`/api/flows/runs/${runId}`).catch(() => null);
+    const j = runRes ? await runRes.json().catch(() => null) : null;
+    if (j?.run) setRun(j as RunView);
+  };
+  const pendingApproval = run?.approvals?.find((a) => a.status === 'pending') ?? null;
+
   const btn = 'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] font-semibold transition-colors disabled:opacity-50';
   const fmtMs = (ms: number | null) => (ms == null ? '—' : `${(ms / 1000).toFixed(1)}s`);
   const selectedNodeRun = run?.nodeRuns.find((nr) => nr.id === selNode) ?? null;
+
+  const editingNode = editNode ? nodes.find((n) => n.id === editNode) ?? null : null;
+  const editingEdge = editEdge ? edges.find((e) => e.id === editEdge) ?? null : null;
+  const editingEdgeSource = editingEdge ? nodes.find((n) => n.id === editingEdge.source) ?? null : null;
+  const decisionRoutesFor = (n: WFNode | null): string[] => {
+    if (n?.data.nodeType === 'approval') {
+      // Approval routes like a decision: the two source handles are its approve/reject labels.
+      const approve = (n.data.config.approveRoute as string) || 'approve';
+      const reject = (n.data.config.rejectRoute as string) || 'reject';
+      return [...new Set([approve, reject])];
+    }
+    const rules = (n?.data.config.rules as { route: string }[]) ?? [];
+    const def = n?.data.config.defaultRoute as string | undefined;
+    const set = new Set(rules.map((r) => r.route).filter(Boolean));
+    if (def) set.add(def);
+    return [...set];
+  };
+  const selectedRoute = (selectedNodeRun?.output?.data as { selectedRoute?: string } | undefined)?.selectedRoute;
 
   return (
     <div className="flex h-full flex-col">
@@ -462,7 +608,13 @@ export function FlowCanvas({
             onNodesChange={(c) => { onNodesChange(c); if (c.some((x) => x.type === 'remove' || x.type === 'position')) setDirty(true); }}
             onEdgesChange={(c) => { onEdgesChange(c); if (c.some((x) => x.type === 'remove')) setDirty(true); }}
             onConnect={onConnect}
+            onNodeClick={(_, n) => { setEditEdge(null); setEditNode(n.id); }}
+            onEdgeClick={(_, e) => { setEditNode(null); setEditEdge(e.id); }}
+            onPaneClick={() => { setEditNode(null); setEditEdge(null); }}
             nodeTypes={nodeTypes}
+            // Node deletion is handled by our own keyboard/inspector logic (guarded
+            // against deleting while typing in an input) — disable RF's built-in key.
+            deleteKeyCode={null}
             fitView
             colorMode="system"
             proOptions={{ hideAttribution: true }}
@@ -472,6 +624,39 @@ export function FlowCanvas({
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
+
+        {(editingNode || editingEdge) && (
+          <aside className="w-72 shrink-0 overflow-y-auto rounded-md border border-os-border bg-os-surface p-3">
+            {editingNode && (
+              <NodeInspector
+                nodeId={editingNode.id}
+                nodeType={editingNode.data.nodeType}
+                label={editingNode.data.label}
+                description={editingNode.data.description}
+                config={editingNode.data.config}
+                onConfig={(c) => patchNodeConfig(editingNode.id, c)}
+                onLabel={(l) => patchNodeLabel(editingNode.id, l)}
+                onDescription={(d) => patchNodeDescription(editingNode.id, d)}
+                onDelete={() => deleteNode(editingNode.id)}
+                onClose={() => setEditNode(null)}
+              />
+            )}
+            {editingEdge && (
+              <EdgeInspector
+                edgeId={editingEdge.id}
+                data={(editingEdge.data as EdgeData) ?? {}}
+                sourceType={editingEdgeSource?.data.nodeType}
+                decisionRoutes={
+                  editingEdgeSource?.data.nodeType === 'decision' || editingEdgeSource?.data.nodeType === 'approval'
+                    ? decisionRoutesFor(editingEdgeSource)
+                    : []
+                }
+                onData={(d) => patchEdgeData(editingEdge.id, d)}
+                onClose={() => setEditEdge(null)}
+              />
+            )}
+          </aside>
+        )}
 
         {(run || runs.length > 0) && (
           <aside className="flex w-72 shrink-0 flex-col overflow-y-auto rounded-md border border-os-border bg-os-surface p-3">
@@ -491,6 +676,37 @@ export function FlowCanvas({
                   {run.run.startedAt && run.run.endedAt ? `${((new Date(run.run.endedAt).getTime() - new Date(run.run.startedAt).getTime()) / 1000).toFixed(1)}s` : 'running…'} · tokens {run.run.totalTokens ?? '—'} · cost —
                 </div>
                 {run.run.errorMessage && <p className="mt-1 font-mono text-[9px] text-os-err">{run.run.errorCode}: {run.run.errorMessage}</p>}
+
+                {pendingApproval && (
+                  <div className="mt-2 rounded border border-os-warn/60 bg-os-warn/5 p-2">
+                    <div className="text-[10px] font-bold text-os-warn">⏸ Awaiting approval</div>
+                    <div className="mt-0.5 text-[10.5px] font-semibold text-os-text">{pendingApproval.title}</div>
+                    {pendingApproval.message && <p className="mt-0.5 whitespace-pre-wrap font-mono text-[9.5px] text-os-muted">{pendingApproval.message}</p>}
+                    <textarea
+                      value={apprNote}
+                      onChange={(e) => setApprNote(e.target.value)}
+                      placeholder="Note (optional)"
+                      rows={2}
+                      className="mt-1.5 w-full resize-none rounded border border-os-border bg-os-bg px-1.5 py-1 font-mono text-[9.5px] text-os-text placeholder:text-os-dim"
+                    />
+                    <div className="mt-1.5 flex gap-1.5">
+                      <button
+                        onClick={() => resolveApproval(pendingApproval.id, 'approve')}
+                        disabled={resolving}
+                        className="flex-1 rounded border border-os-ok/60 px-2 py-1 text-[10px] font-semibold text-os-ok hover:bg-os-ok/10 disabled:opacity-50"
+                      >
+                        Approve → {pendingApproval.approvalRoute}
+                      </button>
+                      <button
+                        onClick={() => resolveApproval(pendingApproval.id, 'reject')}
+                        disabled={resolving}
+                        className="flex-1 rounded border border-os-err/60 px-2 py-1 text-[10px] font-semibold text-os-err hover:bg-os-err/10 disabled:opacity-50"
+                      >
+                        Reject → {pendingApproval.rejectionRoute}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-2 space-y-0.5">
                   {run.nodeRuns.map((nr) => (
@@ -512,7 +728,14 @@ export function FlowCanvas({
                         {selectedNodeRun.totalTokens != null ? ` · ${selectedNodeRun.totalTokens} tok` : ''}
                       </div>
                     )}
-                    {selectedNodeRun.errorCode && <div className="mt-1 font-mono text-[9px] text-os-err">{selectedNodeRun.errorCode}: {selectedNodeRun.errorMessage}</div>}
+                    {selectedNodeRun.status === 'skipped' ? (
+                      <div className="mt-1 font-mono text-[9px] text-os-dim">skipped — {selectedNodeRun.errorMessage ?? selectedNodeRun.errorCode ?? 'branch not selected'}</div>
+                    ) : (
+                      selectedNodeRun.errorCode && <div className="mt-1 font-mono text-[9px] text-os-err">{selectedNodeRun.errorCode}: {selectedNodeRun.errorMessage}</div>
+                    )}
+                    {(selectedNodeRun.nodeType === 'decision' || selectedNodeRun.nodeType === 'approval') && selectedRoute && (
+                      <div className="mt-1 font-mono text-[9.5px] text-os-text">selected route: <span className="text-os-ok">{selectedRoute}</span></div>
+                    )}
                     <div className="mt-1 text-[8.5px] uppercase tracking-wider text-os-dim">output</div>
                     <p className="mt-0.5 max-h-40 overflow-y-auto whitespace-pre-wrap font-mono text-[9.5px] text-os-muted">{selectedNodeRun.output?.text ?? '—'}</p>
                   </div>

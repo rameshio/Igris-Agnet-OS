@@ -12,6 +12,19 @@ import { NodeExecError } from '@/lib/flows/errors';
 import { routeModel } from '@/lib/models/router';
 import { parseModelSettings } from '@/lib/models/settings';
 import { systemPromptFor } from '@/lib/agents/chat';
+import { stableStringify } from '@/lib/flows/references';
+import type { NodeOutput } from '@/lib/flows/run-types';
+
+/**
+ * Deterministically render an agent's resolved input as prompt text (spec §32):
+ * plain text passes through; structured `data` is serialized as pretty JSON —
+ * never `[object Object]`.
+ */
+function inputToPrompt(input: NodeOutput): string {
+  if (input.text?.trim()) return input.text;
+  if (input.data !== undefined && input.data !== null) return `Workflow input:\n${stableStringify(input.data)}`;
+  return '';
+}
 
 export const agentExecutor: NodeExecutor = {
   type: 'agent',
@@ -25,7 +38,9 @@ export const agentExecutor: NodeExecutor = {
     // The AGENT owns its model strategy (Phase B). Node-level override is Phase D.
     const settings = parseModelSettings(agent.model);
     const userText =
-      ctx.input.text?.trim() || ctx.startingInput.text?.trim() || 'Run your task using any provided context, and report your result concisely.';
+      inputToPrompt(ctx.input) ||
+      ctx.startingInput.text?.trim() ||
+      'Run your task using any provided context, and report your result concisely.';
 
     const result = await routeModel(ctx.db, settings, {
       system: systemPromptFor(agent),

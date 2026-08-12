@@ -53,14 +53,15 @@ reached only by explicit memory behavior (Phase F, not built).
 
 ## Current development phase
 
-- **Completed:** Phase A (workflow foundation) · Phase B (unified model runtime) · **Phase C (execution engine + Run Inspector).**
-- **Next planned:** **Phase D — Logic nodes** (Decision, Transform, Parallel/Join, conditional/field edges). **Do not start it without explicit instruction.**
+- **Completed:** Phase A (workflow foundation) · Phase B (unified model runtime) · Phase C (execution engine + Run Inspector) · Phase D (logic nodes: `{{Node.field}}` references, edge mapping, Decision + conditions, conditional edges, Transform, Parallel/Join) · **Phase E — Human Approval node + durable pause/resume (`flow_approvals`, `resumeWorkflowRun`, approve/reject API, Approvals inbox; idempotent, survives restart, no upstream rerun, routes like a Decision, never auto-approves).**
+- **Next planned:** **Phase F — Memory** (explicit G-Brain read/write nodes) or **HRA-2 H4** (remote Hermes). **Do not start either without explicit instruction.** Phase E follow-ons (approval expiry/TTL, an auth layer, Hermes-session approval continuation, executor-level destructive-action gates) are also not built.
 - See `PHASE-STATUS.md` for the full LIVE / PLANNED / LEGACY matrix and invariants.
 
-## Known limitations (post-Phase C)
+## Known limitations (post-Phase D)
 
-- Workflow execution is **sequential** (parallel/join is Phase D).
-- Only **Input / AI Agent / Output** nodes execute; all other node types are placed-but-rejected-before-run.
+- Workflow execution is **sequential** — Parallel branches run in a deterministic order, not truly concurrent (correctness over literal simultaneity).
+- Executable node types: **Input / AI Agent / Output / Transform / Decision / Parallel / Join**. Human Approval (E) and Memory (F) are placed-but-rejected-before-run.
+- Static reference validation checks only the reference **root** (that the source node exists); deeper runtime paths cannot be proven at publish time. Optional/default reference values are deferred.
 - **Auto** model strategy is a stub — it fails clearly with `auto_not_implemented`, never silently picks a model.
 - No model **fallback**, **retries**, or **cancel** yet (Phase G).
 - Hermes ACP does not report token usage → node token counts are `null` (honest, not 0); estimated cost is `null` (no fabricated pricing).

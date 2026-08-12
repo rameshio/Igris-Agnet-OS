@@ -33,7 +33,21 @@
 ## Destructive / external actions
 
 - The Conductor's operator actions (create/edit/delete/run agent) are **confirm-each** — the UI confirms before the write endpoint is called.
-- The workflow engine's executors are **read/compute-oriented** in Phase C: Input/Agent/Output. Do **not** add unattended destructive external side effects (send email, submit, delete, spend) to executors — those must pass a **Human Approval** node when Phase E lands.
+- The workflow engine's executors are **read/compute-oriented** in Phase C: Input/Agent/Output. Do **not** add unattended destructive external side effects (send email, submit, delete, spend) to executors — those should pass a **Human Approval** node (Phase E — now available) before the side effect runs. (Wiring executors to require an upstream approval is a Phase-E follow-on, not yet built.)
+
+## Human Approval endpoints (Phase E)
+
+- **Backend-authoritative:** `POST /api/flow-approvals/:id/approve|reject` accept only the approval id (path), the decision (route), and an optional note. The run id, workflow, node, and approve/reject routes are read from the persisted `flow_approvals` row — the client cannot supply run state, a workflow id, or a foreign run. One approval can therefore only ever resolve its own run.
+- **Nothing auto-approves.** Only a human, via these endpoints, resolves a Human Approval node or a Hermes `approval/sudo/secret.request`. Resolution is idempotent (a conditional `UPDATE … WHERE status='pending'`), so a double-submit or race resolves once and resumes once.
+- **No secrets in `context_json`.** The approver context holds non-secret workflow data only (the resolved node input text + configured references) — never credentials, tokens, or a `secret.request` value. The approvals list/inspector return the row as-is precisely because it carries no secret.
+- **Runs execute immutable versions.** Resume reloads the published version and continues from persisted node runs; a paused run's graph cannot be mutated out from under it, and succeeded nodes are never re-run.
+
+## Workflow delete / archive (history-safe)
+
+- **The backend decides delete vs archive, not the client.** `DELETE /api/flows/:id` calls `removeOrArchiveWorkflow` (`lib/flows/workflow-admin.ts`): a workflow with any published version or run is **soft-archived** (`archived_at`) so immutable versions and run/approval audit records are **never destroyed**; only a history-free draft is hard-deleted. The response states which happened; a missing id is `404`.
+- **No cross-workflow / injection reach.** All repo queries are parameterized; a bogus or injection-shaped id resolves to `not_found`, never touches another workflow, and never executes SQL. The service touches only the `flow_*` tables — the legacy `agent_flows` system is never affected.
+- **Rename is validated.** `PATCH /api/flows/:id` trims the name and rejects whitespace-only (`400`); duplicate names are allowed because the workflow `id`, not the name, is the identity.
+- **Node deletion is draft-only.** Deleting a canvas node edits the draft; an already-published immutable version is unchanged until the user Publishes again.
 
 ## Security checklist for AI coding agents
 
@@ -47,3 +61,41 @@ Before modifying any model/provider/credential code, confirm:
 - [ ] The frontend receives only `hasCredential` (boolean), never the value.
 - [ ] Base URLs are validated; no `javascript:`/non-http schemes.
 - [ ] A secret-leak test exists for any new route touching credentials.
+
+## Hermes runtime management (HRA-2 H2)
+
+- **Serve token stays backend-only.** The Hermes `serve` dashboard token lives only in
+  `.env.local` (`HERMES_SERVE_TOKEN`, file mode 0600) — never in SQLite, never returned to the
+  frontend, never logged. The API/UI expose `tokenConfigured` (boolean) only. Managed start passes
+  the token to serve via the `HERMES_DASHBOARD_SESSION_TOKEN` **environment variable**, never on the
+  command line.
+- **Ownership before action.** A process is `managed` only if IGRIS launched it and its PID is still
+  alive; anything else reachable on the port is `external`/shared. Stop kills the **exact owned PID**
+  only — never `hermes serve --stop` (which stops all servers) and never an external/shared runtime.
+- **No blind trust of a port.** A candidate binary is accepted only if `<bin> --version` prints a
+  Hermes banner; a reachable endpoint is treated as Hermes only if `/api/status` is Hermes-shaped
+  (version + components/gateway fields). A bare HTTP 200 is not Hermes.
+- **Command execution.** Discovery/lifecycle use `execFile`/`spawn` with argv arrays and no shell
+  (`shell:false`), bounded timeouts, and redacted errors — no string-interpolated shell commands.
+
+## Serve production transport (HRA-2 H3)
+
+- **No silent fallback.** When the production transport is `serve` and serve fails, the call surfaces
+  `hermes_unavailable` — it never quietly reverts to ACP (or any other model). ACP is rollback via the
+  explicit `set_transport` setting only.
+- **Token never leaves the backend.** The serve WS uses `HERMES_SERVE_TOKEN` from `.env.local`; it is
+  never sent to the frontend, never stored in SQLite, and every serve error message is token-redacted
+  (`redactToken`). Prompts are not logged by default; serve diagnostics (behind `HERMES_SERVE_DEBUG`)
+  carry only safe metadata (session id, timings, event type) — never token/prompt/tool args.
+- **Eligibility gate + isolation.** Serve becomes the production transport only when the runtime is
+  healthy, `/api/status` is Hermes-shaped, and a token is configured. Each agent-node run opens ONE
+  fresh serve session (no conversational-context bleed between unrelated runs).
+- **Approval events are not auto-answered.** `approval.request`/`sudo.request`/`secret.request` from a
+  serve-backed agent fail as `hermes_approval_required` — IGRIS never auto-approves a privileged action.
+  Phase E ships native Human Approval NODES (durable pause/resume); resuming a Hermes SESSION mid-turn
+  after a decision is deferred (no verified serve continuation RPC), so a Hermes-originated request
+  surfaces honestly and stops there.
+- **Persistent memory boundary.** Hermes retains its own cross-session memory independent of IGRIS
+  G-Brain; per-run session isolation prevents context bleed, but sensitive workflow content may still
+  enter Hermes's machine-wide memory. A dedicated Hermes profile / `--isolated` is the pending privacy
+  lever (H4) and a condition before serve could become a default.

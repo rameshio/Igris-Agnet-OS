@@ -12,7 +12,7 @@ import type { FounderDb } from '@/lib/db';
 import type { FlowRun } from '@/lib/flows/run-types';
 import type { WorkflowGraph } from '@/lib/flows/schema';
 import type { RuntimeAgent } from '@/lib/agents/runtime';
-import { executeRun } from '@/lib/flows/engine';
+import { executeRun, resumeRun } from '@/lib/flows/engine';
 
 // Next.js bundles each API route separately, so a plain module-level Set would
 // NOT be shared between the POST (start) and GET (reconcile) routes. Pin the
@@ -41,6 +41,33 @@ export function startRun(db: FounderDb, run: FlowRun, graph: WorkflowGraph, agen
       });
     })
     .finally(() => active.delete(run.id));
+}
+
+/**
+ * Resume a run paused on a Human Approval node (Phase E), in the background.
+ * Mirrors `startRun`: adds the run to the process-wide active set FIRST (so a
+ * concurrent `reconcile` never sees the resuming run as stale), then continues
+ * the engine. The active set doubles as a resume lock — a second resume of a run
+ * already in flight is a no-op, and the engine itself is idempotent (a run not in
+ * `waiting_approval` returns immediately). Returns whether a resume was launched.
+ */
+export function resumeRunBg(db: FounderDb, runId: string, agents: RuntimeAgent[]): boolean {
+  if (active.has(runId)) return false; // already resuming/running in this process
+  const run = db.flowRuns.get(runId);
+  if (!run || run.status !== 'waiting_approval') return false; // nothing to resume
+  active.add(runId);
+  void resumeRun(db, runId, agents)
+    .catch((err) => {
+      db.flowRuns.update(runId, {
+        status: 'failed',
+        endedAt: new Date().toISOString(),
+        currentNodeId: null,
+        errorCode: 'engine_error',
+        errorMessage: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+      });
+    })
+    .finally(() => active.delete(runId));
+  return true;
 }
 
 /** On read: a `running` run not active in this process is stale → interrupted. */

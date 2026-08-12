@@ -6,11 +6,12 @@
  */
 import { z } from 'zod';
 
-export const RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'canceled', 'interrupted'] as const;
+export const RUN_STATUSES = ['queued', 'running', 'waiting_approval', 'success', 'failed', 'canceled', 'interrupted'] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
-// `waiting_approval` is reserved for Phase E — declared but never produced here.
-export const NODE_RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'skipped', 'waiting_approval'] as const;
+// `waiting_approval` — a node paused on a Human Approval gate (Phase E). `rejected`
+// — a normal human rejection, kept distinct from `failed` (an execution error).
+export const NODE_RUN_STATUSES = ['queued', 'running', 'success', 'failed', 'skipped', 'waiting_approval', 'rejected'] as const;
 export type NodeRunStatus = (typeof NODE_RUN_STATUSES)[number];
 
 export const NodeOutputSchema = z.object({ text: z.string().optional(), data: z.unknown().optional() });
@@ -59,6 +60,43 @@ export type FlowNodeRun = {
   attempt: number;
   errorCode: string | null;
   errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * Human Approval record (Phase E). A durable pause-point: while a run waits on a
+ * Human Approval node it has a `pending` approval row; a human resolves it to
+ * `approved`/`rejected` and the run resumes. `context_json` holds only
+ * non-secret workflow data (never credentials/tokens) — see docs/SECURITY.md.
+ */
+export const APPROVAL_STATUSES = ['pending', 'approved', 'rejected', 'expired', 'cancelled'] as const;
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+/** Where the approval originated. `workflow` = a native Human Approval node. */
+export const APPROVAL_REQUEST_TYPES = ['workflow', 'hermes', 'tool', 'sudo', 'secret'] as const;
+export type ApprovalRequestType = (typeof APPROVAL_REQUEST_TYPES)[number];
+
+export type FlowApproval = {
+  id: string;
+  runId: string;
+  nodeRunId: string | null;
+  workflowId: string;
+  workflowVersion: number;
+  nodeId: string;
+  status: ApprovalStatus;
+  requestType: ApprovalRequestType;
+  title: string;
+  message: string;
+  /** Non-secret context shown to the approver; parsed from context_json. */
+  context: unknown | null;
+  requestedAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+  /** Source-handle label activated on approve / reject (routes like a decision). */
+  approvalRoute: string;
+  rejectionRoute: string;
   createdAt: string;
   updatedAt: string;
 };

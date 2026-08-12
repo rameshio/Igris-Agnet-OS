@@ -1,7 +1,17 @@
 import Database from 'better-sqlite3';
 import { isValidCron } from '@/lib/cron';
 import type { WorkflowGraph } from '@/lib/flows/schema';
-import type { FlowRun, FlowNodeRun, RunStatus, NodeRunStatus, NodeOutput, StartRunInput } from '@/lib/flows/run-types';
+import type {
+  FlowRun,
+  FlowNodeRun,
+  RunStatus,
+  NodeRunStatus,
+  NodeOutput,
+  StartRunInput,
+  FlowApproval,
+  ApprovalStatus,
+  ApprovalRequestType,
+} from '@/lib/flows/run-types';
 import {
   AgentCronSchema,
   AgentMessageSchema,
@@ -130,6 +140,7 @@ CREATE TABLE IF NOT EXISTS flow_workflows (
   description TEXT NOT NULL DEFAULT '',
   draft_graph TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
   current_version INTEGER,
+  archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -200,6 +211,34 @@ CREATE TABLE IF NOT EXISTS flow_node_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_flow_runs_workflow ON flow_runs (workflow_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_flow_node_runs_run ON flow_node_runs (run_id);
+-- Human Approval gates (Phase E). A durable pause-point: a run waiting on a
+-- Human Approval node has a pending row here; a human resolves it and the run
+-- resumes. Additive/idempotent. context_json holds NON-SECRET workflow data only
+-- (never credentials/tokens) -- see docs/SECURITY.md.
+CREATE TABLE IF NOT EXISTS flow_approvals (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  node_run_id TEXT,
+  workflow_id TEXT NOT NULL,
+  workflow_version INTEGER NOT NULL,
+  node_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  request_type TEXT NOT NULL DEFAULT 'workflow',
+  title TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
+  context_json TEXT,
+  approval_route TEXT NOT NULL DEFAULT 'approve',
+  rejection_route TEXT NOT NULL DEFAULT 'reject',
+  requested_at TEXT NOT NULL,
+  resolved_at TEXT,
+  resolved_by TEXT,
+  resolution_note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flow_approvals_run ON flow_approvals (run_id);
+CREATE INDEX IF NOT EXISTS idx_flow_approvals_status ON flow_approvals (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_flow_approvals_node_run ON flow_approvals (node_run_id);
 CREATE TABLE IF NOT EXISTS roadmap_items (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -470,6 +509,16 @@ function migrateAgentRunsTable(db: InstanceType<typeof Database>): void {
   if (!columns.has('cost_usd')) db.exec('ALTER TABLE agent_runs ADD COLUMN cost_usd REAL');
 }
 
+// /flows workflows gained soft-archive after first ship: a workflow with run or
+// version history is archived (hidden) instead of hard-deleted so immutable
+// versions and run/approval audit records survive. Additive + idempotent.
+function migrateFlowWorkflowsTable(db: InstanceType<typeof Database>): void {
+  const columns = new Set(
+    (db.pragma('table_info(flow_workflows)') as { name: string }[]).map((c) => c.name),
+  );
+  if (columns.size > 0 && !columns.has('archived_at')) db.exec('ALTER TABLE flow_workflows ADD COLUMN archived_at TEXT');
+}
+
 type AgentRow = {
   id: string;
   department_id: string;
@@ -509,6 +558,7 @@ export function openDb(path: string) {
   migrateSkillsTable(db);
   migrateCustomAgentsTable(db);
   migrateAgentRunsTable(db);
+  migrateFlowWorkflowsTable(db);
 
   const departments = {
     all(): Department[] {
@@ -641,6 +691,7 @@ export function openDb(path: string) {
     description: string;
     draft_graph: string;
     current_version: number | null;
+    archived_at: string | null;
     created_at: string;
     updated_at: string;
   };
@@ -659,20 +710,29 @@ export function openDb(path: string) {
     description: r.description,
     draftGraph: parseGraph(r.draft_graph),
     currentVersion: r.current_version,
+    archivedAt: r.archived_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   });
 
   const flowWorkflows = {
-    all() {
-      return db
-        .prepare('SELECT * FROM flow_workflows ORDER BY updated_at DESC')
-        .all()
-        .map((r) => rowToWorkflow(r as FlowWorkflowRow));
+    /** Active workflows only. Pass { includeArchived:true } to include soft-archived rows. */
+    all(opts?: { includeArchived?: boolean }) {
+      const sql = opts?.includeArchived
+        ? 'SELECT * FROM flow_workflows ORDER BY updated_at DESC'
+        : 'SELECT * FROM flow_workflows WHERE archived_at IS NULL ORDER BY updated_at DESC';
+      return db.prepare(sql).all().map((r) => rowToWorkflow(r as FlowWorkflowRow));
     },
     get(id: string) {
       const r = db.prepare('SELECT * FROM flow_workflows WHERE id = ?').get(id) as FlowWorkflowRow | undefined;
       return r ? rowToWorkflow(r) : null;
+    },
+    /** True if the workflow has audit-worthy history: any published version OR any run. */
+    hasHistory(id: string): boolean {
+      const v = db.prepare('SELECT 1 FROM flow_versions WHERE workflow_id = ? LIMIT 1').get(id);
+      if (v) return true;
+      const r = db.prepare('SELECT 1 FROM flow_runs WHERE workflow_id = ? LIMIT 1').get(id);
+      return !!r;
     },
     create(input: { id: string; name: string; description?: string; graph: WorkflowGraph }) {
       const now = new Date().toISOString();
@@ -705,6 +765,22 @@ export function openDb(path: string) {
         id,
       );
     },
+    /** Soft-archive: hide from the active list while preserving versions/runs/approvals. */
+    archive(id: string) {
+      db.prepare('UPDATE flow_workflows SET archived_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL').run(
+        new Date().toISOString(),
+        new Date().toISOString(),
+        id,
+      );
+    },
+    unarchive(id: string) {
+      db.prepare('UPDATE flow_workflows SET archived_at = NULL, updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+    },
+    /**
+     * Hard delete — ONLY safe for a workflow with no history (no versions, no runs).
+     * Callers must gate on hasHistory(); the service layer (workflow-admin) does.
+     * Deletes the (empty) version set + the draft row; never touches run/approval audit.
+     */
     remove(id: string) {
       db.prepare('DELETE FROM flow_versions WHERE workflow_id = ?').run(id);
       db.prepare('DELETE FROM flow_workflows WHERE id = ?').run(id);
@@ -1011,6 +1087,142 @@ export function openDb(path: string) {
         id,
       );
       return this.get(id);
+    },
+  };
+
+  type FlowApprovalRow = {
+    id: string;
+    run_id: string;
+    node_run_id: string | null;
+    workflow_id: string;
+    workflow_version: number;
+    node_id: string;
+    status: string;
+    request_type: string;
+    title: string;
+    message: string;
+    context_json: string | null;
+    approval_route: string;
+    rejection_route: string;
+    requested_at: string;
+    resolved_at: string | null;
+    resolved_by: string | null;
+    resolution_note: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const rowToApproval = (r: FlowApprovalRow): FlowApproval => ({
+    id: r.id,
+    runId: r.run_id,
+    nodeRunId: r.node_run_id,
+    workflowId: r.workflow_id,
+    workflowVersion: r.workflow_version,
+    nodeId: r.node_id,
+    status: r.status as ApprovalStatus,
+    requestType: r.request_type as ApprovalRequestType,
+    title: r.title,
+    message: r.message,
+    context: parseJson<unknown>(r.context_json, null),
+    approvalRoute: r.approval_route,
+    rejectionRoute: r.rejection_route,
+    requestedAt: r.requested_at,
+    resolvedAt: r.resolved_at,
+    resolvedBy: r.resolved_by,
+    resolutionNote: r.resolution_note,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  // Human Approval gates (Phase E). `resolve` is a CONDITIONAL update (only a
+  // `pending` row transitions) so approving twice runs the workflow exactly once
+  // (idempotency lives in SQLite, not the caller). context is NON-SECRET only.
+  const flowApprovals = {
+    create(input: {
+      id: string;
+      runId: string;
+      nodeRunId: string | null;
+      workflowId: string;
+      workflowVersion: number;
+      nodeId: string;
+      requestType?: ApprovalRequestType;
+      title: string;
+      message: string;
+      context?: unknown;
+      approvalRoute: string;
+      rejectionRoute: string;
+    }): FlowApproval {
+      const nowIso = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO flow_approvals
+          (id, run_id, node_run_id, workflow_id, workflow_version, node_id, status, request_type,
+           title, message, context_json, approval_route, rejection_route, requested_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        input.id,
+        input.runId,
+        input.nodeRunId,
+        input.workflowId,
+        input.workflowVersion,
+        input.nodeId,
+        input.requestType ?? 'workflow',
+        input.title,
+        input.message,
+        input.context === undefined ? null : JSON.stringify(input.context),
+        input.approvalRoute,
+        input.rejectionRoute,
+        nowIso,
+        nowIso,
+        nowIso,
+      );
+      return this.get(input.id)!;
+    },
+    get(id: string): FlowApproval | null {
+      const r = db.prepare('SELECT * FROM flow_approvals WHERE id = ?').get(id) as FlowApprovalRow | undefined;
+      return r ? rowToApproval(r) : null;
+    },
+    forRun(runId: string): FlowApproval[] {
+      return db
+        .prepare('SELECT * FROM flow_approvals WHERE run_id = ? ORDER BY created_at')
+        .all(runId)
+        .map((r) => rowToApproval(r as FlowApprovalRow));
+    },
+    /** The most recent approval attached to a specific node run (for resume). */
+    latestForNodeRun(nodeRunId: string): FlowApproval | null {
+      const r = db
+        .prepare('SELECT * FROM flow_approvals WHERE node_run_id = ? ORDER BY created_at DESC LIMIT 1')
+        .get(nodeRunId) as FlowApprovalRow | undefined;
+      return r ? rowToApproval(r) : null;
+    },
+    /** All pending approvals across runs, newest first — the Approvals inbox. */
+    pending(limit = 100): FlowApproval[] {
+      return db
+        .prepare("SELECT * FROM flow_approvals WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?")
+        .all(limit)
+        .map((r) => rowToApproval(r as FlowApprovalRow));
+    },
+    /**
+     * Conditionally resolve a PENDING approval. Returns the row only when THIS
+     * call performed the transition (SQLite `changes === 1`); a second concurrent
+     * approve sees `changes === 0` and gets `null` (idempotent — one execution).
+     */
+    resolve(id: string, decision: 'approved' | 'rejected', resolvedBy: string, note: string | null): FlowApproval | null {
+      const nowIso = new Date().toISOString();
+      const res = db
+        .prepare(
+          "UPDATE flow_approvals SET status = ?, resolved_at = ?, resolved_by = ?, resolution_note = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
+        )
+        .run(decision, nowIso, resolvedBy, note, nowIso, id);
+      if (res.changes !== 1) return null;
+      return this.get(id);
+    },
+    /** Cancel every still-pending approval for a run (used when a run is canceled). */
+    cancelForRun(runId: string, resolvedBy: string): number {
+      const nowIso = new Date().toISOString();
+      const res = db
+        .prepare(
+          "UPDATE flow_approvals SET status = 'cancelled', resolved_at = ?, resolved_by = ?, updated_at = ? WHERE run_id = ? AND status = 'pending'",
+        )
+        .run(nowIso, resolvedBy, nowIso, runId);
+      return res.changes;
     },
   };
 
@@ -1807,6 +2019,7 @@ export function openDb(path: string) {
     flowMaintenance,
     flowRuns,
     flowNodeRuns,
+    flowApprovals,
     modelConnections,
     meta,
     maintenance,

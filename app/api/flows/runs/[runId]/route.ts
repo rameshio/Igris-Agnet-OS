@@ -24,10 +24,15 @@ export function GET(_req: Request, { params }: { params: { runId: string } }) {
     .filter(Boolean);
   const finalOutput = outParts.length ? { text: outParts.join('\n\n') } : null;
 
+  // Human-approval gates for this run (Phase E). context_json holds NON-SECRET
+  // workflow data only — safe to return to the Run Inspector.
+  const approvals = db.flowApprovals.forRun(run.id);
+
   return NextResponse.json({
     run,
     workflow: wf ? { id: wf.id, name: wf.name } : null,
     nodeRuns,
+    approvals,
     finalOutput,
   });
 }

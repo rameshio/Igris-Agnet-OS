@@ -59,3 +59,28 @@ describe('legacy main-flow migration', () => {
     expect(db.flowWorkflows.get('wf-main')).toBeNull();
   });
 });
+
+describe('flow_workflows archived_at soft-archive column', () => {
+  test('the additive column exists and archive/unarchive toggle active listing', () => {
+    const db = openDb(':memory:');
+    db.flowWorkflows.create({ id: 'wf-arch', name: 'Arch', graph: { nodes: [], edges: [] } });
+
+    expect(db.flowWorkflows.get('wf-arch')?.archivedAt).toBeNull();
+    db.flowWorkflows.archive('wf-arch');
+    expect(db.flowWorkflows.get('wf-arch')?.archivedAt).toBeTruthy();
+    expect(db.flowWorkflows.all().find((w) => w.id === 'wf-arch')).toBeUndefined();
+    expect(db.flowWorkflows.all({ includeArchived: true }).find((w) => w.id === 'wf-arch')).toBeTruthy();
+
+    db.flowWorkflows.unarchive('wf-arch');
+    expect(db.flowWorkflows.get('wf-arch')?.archivedAt).toBeNull();
+    expect(db.flowWorkflows.all().find((w) => w.id === 'wf-arch')).toBeTruthy();
+  });
+
+  test('hasHistory reflects versions and runs', () => {
+    const db = openDb(':memory:');
+    db.flowWorkflows.create({ id: 'wf-h', name: 'H', graph: { nodes: [], edges: [] } });
+    expect(db.flowWorkflows.hasHistory('wf-h')).toBe(false);
+    db.flowVersions.create({ id: 'wf-h-v1', workflowId: 'wf-h', version: 1, graph: { nodes: [], edges: [] } });
+    expect(db.flowWorkflows.hasHistory('wf-h')).toBe(true);
+  });
+});

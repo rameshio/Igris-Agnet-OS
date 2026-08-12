@@ -9,6 +9,7 @@
 import { WorkflowGraphSchema, type NodeType, type WorkflowGraph } from '@/lib/flows/schema';
 import { nodeExecutorRegistry } from '@/lib/flows/registry';
 import { NODE_TYPE_META } from '@/lib/flows/node-types';
+import { extractReferenceRoots } from '@/lib/flows/references';
 
 export type ValidationIssue = {
   code:
@@ -23,7 +24,15 @@ export type ValidationIssue = {
     | 'missing_agent'
     | 'cycle'
     | 'unsupported_node_type'
-    | 'no_output';
+    | 'no_output'
+    // Phase D:
+    | 'invalid_reference'
+    | 'unknown_reference_source'
+    | 'decision_no_routes'
+    | 'duplicate_route'
+    | 'unknown_route_handle'
+    | 'join_no_inputs'
+    | 'invalid_mapping';
   message: string;
   nodeId?: string;
   edgeId?: string;
@@ -123,6 +132,63 @@ export function validateWorkflowGraph(input: unknown, opts: ValidateOptions = {}
     if (e.source === e.target) issues.push({ code: 'self_edge', message: `Edge "${e.id}" connects a node to itself.`, edgeId: e.id });
     if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) {
       issues.push({ code: 'dangling_edge', message: `Edge "${e.id}" points to a node that does not exist.`, edgeId: e.id });
+    }
+  }
+
+  // ── Phase D: reference / decision / mapping / join structural checks ──
+  // Valid reference roots = every node id, plus each unique, non-colliding label.
+  const validRoots = new Set<string>(nodeIds);
+  {
+    const labelCounts = new Map<string, number>();
+    for (const n of graph.nodes) if (n.label) labelCounts.set(n.label, (labelCounts.get(n.label) ?? 0) + 1);
+    for (const n of graph.nodes) if (n.label && labelCounts.get(n.label) === 1 && !nodeIds.has(n.label)) validRoots.add(n.label);
+  }
+  const checkRefs = (template: string, where: string, loc: { nodeId?: string; edgeId?: string }): void => {
+    const { roots, invalid } = extractReferenceRoots(template);
+    for (const bad of invalid) issues.push({ code: 'invalid_reference', message: `${where}: reference "{{${bad}}}" is not a valid property path.`, ...loc });
+    for (const r of roots) if (!validRoots.has(r)) issues.push({ code: 'unknown_reference_source', message: `${where}: reference source "${r}" is not a node in this workflow.`, ...loc });
+  };
+
+  const decisionRoutes = new Map<string, Set<string>>();
+  for (const n of graph.nodes) {
+    if (n.type === 'transform') {
+      const c = n.config;
+      const mode = c.mode ?? 'object';
+      if (mode === 'template' && c.template) checkRefs(c.template, `Transform "${n.id}"`, { nodeId: n.id });
+      else if (mode === 'field' && c.field) checkRefs(c.field, `Transform "${n.id}"`, { nodeId: n.id });
+      else if (mode === 'object') for (const k of Object.keys(c.object ?? {})) checkRefs((c.object ?? {})[k], `Transform "${n.id}" key "${k}"`, { nodeId: n.id });
+    }
+    if (n.type === 'decision') {
+      const rules = n.config.rules ?? [];
+      const routes = new Set<string>();
+      if (rules.length === 0 && !n.config.defaultRoute) issues.push({ code: 'decision_no_routes', message: `Decision "${n.id}" has no rules and no default route.`, nodeId: n.id });
+      for (const r of rules) {
+        if (routes.has(r.route)) issues.push({ code: 'duplicate_route', message: `Decision "${n.id}" declares route "${r.route}" more than once.`, nodeId: n.id });
+        routes.add(r.route);
+        checkRefs(r.condition.left, `Decision "${n.id}" rule "${r.route}"`, { nodeId: n.id });
+        if (typeof r.condition.right === 'string') checkRefs(r.condition.right, `Decision "${n.id}" rule "${r.route}" (right)`, { nodeId: n.id });
+      }
+      if (n.config.defaultRoute) routes.add(n.config.defaultRoute);
+      decisionRoutes.set(n.id, routes);
+    }
+    if (n.type === 'join' && !graph.edges.some((e) => e.target === n.id)) {
+      issues.push({ code: 'join_no_inputs', message: `Join "${n.id}" has no incoming branches.`, nodeId: n.id });
+    }
+  }
+
+  for (const e of graph.edges) {
+    const routes = decisionRoutes.get(e.source);
+    if (routes) {
+      if (e.sourceHandle == null) issues.push({ code: 'unknown_route_handle', message: `Edge "${e.id}" leaves Decision "${e.source}" without a route handle.`, edgeId: e.id });
+      else if (!routes.has(e.sourceHandle)) issues.push({ code: 'unknown_route_handle', message: `Edge "${e.id}" uses route "${e.sourceHandle}" not declared by Decision "${e.source}".`, edgeId: e.id });
+    }
+    const m = e.mapping;
+    if (m?.mode === 'field' && m.field) checkRefs(m.field, `Edge "${e.id}" field mapping`, { edgeId: e.id });
+    if (m?.mode === 'template' && m.template) checkRefs(m.template, `Edge "${e.id}" template mapping`, { edgeId: e.id });
+    if (m?.mode === 'object' && m.object) for (const k of Object.keys(m.object)) checkRefs(m.object[k], `Edge "${e.id}" object mapping "${k}"`, { edgeId: e.id });
+    if (e.condition) {
+      checkRefs(e.condition.left, `Edge "${e.id}" condition`, { edgeId: e.id });
+      if (typeof e.condition.right === 'string') checkRefs(e.condition.right, `Edge "${e.id}" condition (right)`, { edgeId: e.id });
     }
   }
 
