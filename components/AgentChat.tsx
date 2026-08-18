@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MessageSquare, Send } from 'lucide-react';
 import type { AgentMessage } from '@/lib/schemas';
+import { publishAgentContext } from '@/lib/context-envelope';
 
 /**
  * Per-agent chat panel. Talk to one agent in an LLM-backed conversation that
@@ -23,6 +24,17 @@ export function AgentChat({
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Opening a chat = selecting this agent → publish its id to the U1 envelope so
+  // the Commander can ground "this agent" on it. Publishing lives in the event
+  // handler (NOT the setState updater) so one click = one publish. Clear on
+  // unmount so a stale agentId never lingers after navigation.
+  const toggleOpen = () => {
+    const next = !open;
+    setOpen(next);
+    publishAgentContext(next ? agentId : undefined);
+  };
+  useEffect(() => () => publishAgentContext(undefined), []);
 
   async function send() {
     const text = input.trim();
@@ -49,7 +61,7 @@ export function AgentChat({
   return (
     <div className="mt-3 border-t border-os-border pt-3">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggleOpen}
         className="flex w-full items-center justify-between text-left font-mono text-[10px] uppercase tracking-wider text-os-dim hover:text-os-muted"
       >
         <span className="flex items-center gap-1.5">

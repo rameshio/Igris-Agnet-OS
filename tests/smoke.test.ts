@@ -35,6 +35,7 @@ const PAGES: PageEntry[] = [
   { file: 'tasks/page.tsx', load: () => import('@/app/tasks/page') },
   { file: 'skills/page.tsx', load: () => import('@/app/skills/page') },
   { file: 'org/page.tsx', load: () => import('@/app/org/page'), props: { searchParams: {} } },
+  { file: 'missions/page.tsx', load: () => import('@/app/missions/page') },
   { file: 'brain/page.tsx', load: () => import('@/app/brain/page') },
   { file: 'finances/page.tsx', load: () => import('@/app/finances/page') },
   { file: 'funnel/page.tsx', load: () => import('@/app/funnel/page'), props: { searchParams: {} } },

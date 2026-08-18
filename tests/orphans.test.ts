@@ -9,6 +9,11 @@ const KNOWN_ORPHANS: string[] = [
   // longer rendered on /brain, but kept operational for backward compatibility
   // (its /api/agent-flows route still works) until /flows reaches full parity.
   'AgentFlowCanvas',
+  // Home social-audience graph — Home became the U6 Commander operating surface
+  // (briefing + Commander + operational summary), so this business-analytics
+  // visualization is no longer mounted there. Kept (not deleted) for reuse on a
+  // social/analytics surface rather than removing working business functionality.
+  'HomeSocialGraph',
 ];
 
 const ROOT = process.cwd();

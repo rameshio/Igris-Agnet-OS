@@ -746,3 +746,9 @@ body {
 html.conductor-dragging .os-shell {
   transition: none;
 }
+
+/* /flows Focus Canvas overlay — lock background scroll while the canvas takes
+   over the viewport (presentation only; toggled by FlowWorkspace). */
+html[data-flow-focus='on'] {
+  overflow: hidden;
+}

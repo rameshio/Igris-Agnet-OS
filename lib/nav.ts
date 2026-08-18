@@ -10,6 +10,7 @@ import {
   Clapperboard,
   Users,
   ListChecks,
+  Target,
   Sparkles,
   Network,
   Brain,
@@ -38,12 +39,15 @@ export const NAV_OPERATE: NavItem[] = [
   { href: '/finances', label: 'Finances', icon: Wallet },
 ];
 
-// The agent workforce: the roster and the org chart that maps how they report.
+// The agent workforce: the roster, the org chart, and (V2) the company missions
+// the workforce exists to carry out. `/missions` sits at the end so the digit
+// (1–9) shortcuts are unchanged.
 export const NAV_AGENTS: NavItem[] = [
   { href: '/agents', label: 'Agents', icon: Users },
   { href: '/tasks', label: 'Tasks', icon: ListChecks },
   { href: '/skills', label: 'Skills', icon: Sparkles },
   { href: '/org', label: 'Org Chart', icon: Network },
+  { href: '/missions', label: 'Missions', icon: Target },
 ];
 
 // The knowledge layer the agents draw on.

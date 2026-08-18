@@ -19,15 +19,21 @@ type RouteEntry = {
 // a real 200 (not a 400/404 for a missing arg). Live-connector routes
 // (connections, social/sync) must still answer 200 with honest state.
 const ROUTES: RouteEntry[] = [
+  { route: 'activity', load: () => import('@/app/api/activity/route'), url: 'http://localhost/api/activity?limit=5' },
   { route: 'agents', load: () => import('@/app/api/agents/route'), url: 'http://localhost/api/agents' },
   { route: 'agents/activity', load: () => import('@/app/api/agents/activity/route'), url: 'http://localhost/api/agents/activity?limit=5' },
   { route: 'agents/broadcast', load: () => import('@/app/api/agents/broadcast/route'), url: 'http://localhost/api/agents/broadcast' },
+  { route: 'agents/presence', load: () => import('@/app/api/agents/presence/route'), url: 'http://localhost/api/agents/presence' },
+  { route: 'agents/resolve', load: () => import('@/app/api/agents/resolve/route'), url: 'http://localhost/api/agents/resolve?capabilities=research.web' },
+  { route: 'capabilities', load: () => import('@/app/api/capabilities/route'), url: 'http://localhost/api/capabilities' },
   { route: 'agent-flows', load: () => import('@/app/api/agent-flows/route'), url: 'http://localhost/api/agent-flows' },
   { route: 'agents/work', load: () => import('@/app/api/agents/work/route'), url: 'http://localhost/api/agents/work?agentId=data-agent' },
   { route: 'brain', load: () => import('@/app/api/brain/route'), url: 'http://localhost/api/brain' },
   { route: 'models', load: () => import('@/app/api/models/route'), url: 'http://localhost/api/models' },
   { route: 'flows', load: () => import('@/app/api/flows/route'), url: 'http://localhost/api/flows' },
+  { route: 'home', load: () => import('@/app/api/home/route'), url: 'http://localhost/api/home' },
   { route: 'flow-approvals', load: () => import('@/app/api/flow-approvals/route'), url: 'http://localhost/api/flow-approvals' },
+  { route: 'flow-approvals/cards', load: () => import('@/app/api/flow-approvals/cards/route'), url: 'http://localhost/api/flow-approvals/cards' },
   { route: 'brain/graph', load: () => import('@/app/api/brain/graph/route'), url: 'http://localhost/api/brain/graph' },
   { route: 'brain/overview', load: () => import('@/app/api/brain/overview/route'), url: 'http://localhost/api/brain/overview' },
   { route: 'comms', load: () => import('@/app/api/comms/route'), url: 'http://localhost/api/comms' },
@@ -41,6 +47,8 @@ const ROUTES: RouteEntry[] = [
   { route: 'keys', load: () => import('@/app/api/keys/route'), url: 'http://localhost/api/keys' },
   { route: 'life/map', load: () => import('@/app/api/life/map/route'), url: 'http://localhost/api/life/map' },
   { route: 'metrics', load: () => import('@/app/api/metrics/route'), url: 'http://localhost/api/metrics' },
+  { route: 'missions', load: () => import('@/app/api/missions/route'), url: 'http://localhost/api/missions' },
+  { route: 'company-tasks/[id]/dependencies', load: () => import('@/app/api/company-tasks/[id]/dependencies/route'), url: 'http://localhost/api/company-tasks/smoke/dependencies', params: { id: 'smoke' } },
   { route: 'roadmap', load: () => import('@/app/api/roadmap/route'), url: 'http://localhost/api/roadmap' },
   { route: 'settings/brain', load: () => import('@/app/api/settings/brain/route'), url: 'http://localhost/api/settings/brain' },
   { route: 'social', load: () => import('@/app/api/social/route'), url: 'http://localhost/api/social' },
@@ -87,7 +95,9 @@ describe('platform smoke — every GET API route answers 200 with JSON', () => {
     // (environment-dependent, slow, may launch the Hermes CLI), so it is not a
     // 200-required smoke route — it is covered by tests/hermes-runtime.test.ts.
     // flow-approvals/[id] GET 404s without a real approval id — covered by tests/flow-approvals.test.ts.
-    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime']);
+    // agents/[id]/capabilities GET 404s without a real agent id — covered by tests/capabilities-registry.test.ts.
+    // company mission/task GETs 404 without real ids — covered by tests/company-service.test.ts.
+    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime', 'agents/[id]/capabilities', 'missions/[id]', 'missions/[id]/tasks', 'company-tasks/[id]', 'company-tasks/[id]/eligible-agents']);
     const discovered = discoverGetRoutes(path.join(process.cwd(), 'app', 'api')).filter((r) => !IGNORE.has(r)).sort();
     const covered = ROUTES.map((r) => r.route).sort();
     expect(covered).toEqual(discovered);

@@ -43,6 +43,8 @@ import {
   Check,
   X,
   Play,
+  Maximize2,
+  Minimize2,
   type LucideIcon,
 } from 'lucide-react';
 import { NODE_TYPE_META, NODE_TYPE_LIST } from '@/lib/flows/node-types';
@@ -51,6 +53,7 @@ import { parseModelSettings, describeModel } from '@/lib/models/settings';
 import { providerById } from '@/lib/models/catalog';
 import { NodeInspector, EdgeInspector, type EdgeData } from '@/components/flows/InspectorPanel';
 import { shouldDeleteSelection, isEditableTarget } from '@/lib/flows/graph-ops';
+import { publishFlowContext, clearFlowContext } from '@/lib/context-envelope';
 
 const ICONS: Record<string, LucideIcon> = {
   Bot, Wrench, GitFork, UserCheck, Database, Shuffle, Split, Merge, LogIn, LogOut,
@@ -249,12 +252,17 @@ export function FlowCanvas({
   initialGraph,
   agents,
   currentVersion,
+  focusMode,
+  onToggleFocus,
   onPublished,
 }: {
   workflowId: string;
   initialGraph: WorkflowGraph;
   agents: AgentOption[];
   currentVersion?: number | null;
+  /** Focus Canvas is active (owned by FlowWorkspace) — only affects local UX (Focus button + Escape). */
+  focusMode?: boolean;
+  onToggleFocus?: () => void;
   onPublished?: (version: number) => void;
 }) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
@@ -322,19 +330,46 @@ export function FlowCanvas({
     [setNodes, setEdges],
   );
 
-  // Keyboard delete: Delete/Backspace removes the inspector-selected node — but
-  // only when the user is NOT typing in a text field (guarded by isEditableTarget),
-  // so Backspace edits text inside the inspector instead of nuking the node.
+  // Keyboard: Delete/Backspace removes the inspector-selected node (only when NOT
+  // typing in a text field, so Backspace edits text instead of nuking the node);
+  // Escape closes an open inspector. In Focus Canvas, Escape belongs to the
+  // workspace (exit focus), so we don't also close the inspector here.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!editNode) return;
-      if (!shouldDeleteSelection({ key: e.key, editing: isEditableTarget(document.activeElement) })) return;
-      e.preventDefault();
-      deleteNode(editNode);
+      const editing = isEditableTarget(document.activeElement);
+      if (e.key === 'Escape') {
+        if (focusMode || editing) return;
+        if (editNode || editEdge) {
+          setEditNode(null);
+          setEditEdge(null);
+        }
+        return;
+      }
+      if (editNode && shouldDeleteSelection({ key: e.key, editing })) {
+        e.preventDefault();
+        deleteNode(editNode);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [editNode, deleteNode]);
+  }, [editNode, editEdge, deleteNode, focusMode]);
+
+  // Publish what the user is looking at into the app-wide Context Envelope (U1).
+  // Identifiers + flags ONLY — never the graph, node config, run output, or any
+  // payload. This is read-only context for a future AI surface; it triggers no
+  // save/publish/run/fetch and does not touch the draft.
+  useEffect(() => {
+    publishFlowContext({
+      workflowId,
+      workflowVersion: version ?? currentVersion ?? undefined,
+      workflowDraft: true, // the canvas always edits the draft
+      selectedNodeId: editNode ?? undefined,
+      selectedEdgeId: editEdge ?? undefined,
+      runId: runId ?? undefined,
+    });
+  }, [workflowId, version, currentVersion, editNode, editEdge, runId]);
+  // Clear /flows context when the canvas closes (deselect / navigate away).
+  useEffect(() => () => clearFlowContext(), []);
   const patchEdgeData = useCallback(
     (edgeId: string, data: EdgeData) => {
       setEdges((es) => es.map((e) => (e.id === edgeId ? { ...e, data, label: edgeBadge(data) } : e)));
@@ -564,6 +599,17 @@ export function FlowCanvas({
           );
         })}
         <div className="ml-auto flex items-center gap-2">
+          {onToggleFocus && (
+            <button
+              onClick={onToggleFocus}
+              title={focusMode ? 'Exit Focus Canvas (Esc)' : 'Focus Canvas (Ctrl/Cmd+Shift+F)'}
+              aria-label={focusMode ? 'Exit Focus Canvas' : 'Focus Canvas'}
+              aria-pressed={!!focusMode}
+              className={`${btn} border-os-border text-os-muted hover:text-os-text`}
+            >
+              {focusMode ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />} {focusMode ? 'Exit Focus' : 'Focus'}
+            </button>
+          )}
           <button onClick={save} disabled={!!saving} className={`${btn} border-os-border text-os-muted hover:text-os-text`}>
             {saving === 'save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5 text-os-ok" /> : <Save className="h-3.5 w-3.5" />} Save
           </button>

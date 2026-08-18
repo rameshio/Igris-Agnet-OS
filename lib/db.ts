@@ -1,6 +1,15 @@
 import Database from 'better-sqlite3';
 import { isValidCron } from '@/lib/cron';
 import type { WorkflowGraph } from '@/lib/flows/schema';
+import {
+  CapabilityInputSchema,
+  AgentCapabilityAssignSchema,
+  domainOf,
+  type Capability,
+  type AgentCapability,
+  type CapabilitySource,
+} from '@/lib/agents/capabilities';
+import type { Mission, CompanyTask, CompanyTaskDependency } from '@/lib/company/model';
 import type {
   FlowRun,
   FlowNodeRun,
@@ -119,6 +128,70 @@ CREATE TABLE IF NOT EXISTS custom_agents (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- Company Registry capability layer (Architecture V2 · F0.1). Additive; keyed by
+-- the canonical RuntimeAgent id string (built-in OR custom-*) — NOT an FK, since
+-- built-in agents are code (not rows) and custom agents live in a different table.
+CREATE TABLE IF NOT EXISTS capabilities (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  domain TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_capabilities (
+  agent_id TEXT NOT NULL,
+  capability_id TEXT NOT NULL,
+  proficiency INTEGER,
+  source TEXT NOT NULL DEFAULT 'explicit',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (agent_id, capability_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_capabilities_capability ON agent_capabilities (capability_id);
+-- Company work model (Architecture V2 · F0.2). Canonical Missions + Company Tasks,
+-- DISTINCT from the lightweight per-agent agent_tasks kanban (untouched). Additive;
+-- cross-subsystem references (agent/workflow/run/parent/mission) are validated in the
+-- service layer, not by FK, to match the repo canonical-id strategy.
+CREATE TABLE IF NOT EXISTS company_missions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  objective TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_company_missions_status ON company_missions (status);
+CREATE TABLE IF NOT EXISTS company_tasks (
+  id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  parent_task_id TEXT,
+  title TEXT NOT NULL,
+  objective TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'queued',
+  assigned_agent_id TEXT,
+  workflow_id TEXT,
+  run_id TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  required_capabilities TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_company_tasks_mission ON company_tasks (mission_id);
+CREATE INDEX IF NOT EXISTS idx_company_tasks_status ON company_tasks (status);
+CREATE INDEX IF NOT EXISTS idx_company_tasks_agent ON company_tasks (assigned_agent_id);
+CREATE INDEX IF NOT EXISTS idx_company_tasks_parent ON company_tasks (parent_task_id);
+CREATE TABLE IF NOT EXISTS company_task_dependencies (
+  task_id TEXT NOT NULL,
+  depends_on_task_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, depends_on_task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_company_task_deps_dependson ON company_task_dependencies (depends_on_task_id);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -642,6 +715,183 @@ export function openDb(path: string) {
     },
   };
 
+  // ── Company Registry capability layer (F0.1). Data + resolution only; no
+  //    execution. `agent_id` is the canonical RuntimeAgent id (built-in OR
+  //    custom-*), never an FK. Upsert/assign are idempotent (PK conflict → replace).
+  type CapabilityRow = { id: string; name: string; description: string; domain: string; created_at: string };
+  const rowToCapability = (r: CapabilityRow): Capability => ({
+    id: r.id,
+    name: r.name,
+    description: r.description || undefined,
+    domain: r.domain || undefined,
+    createdAt: r.created_at,
+  });
+  const capabilities = {
+    all(): Capability[] {
+      return db.prepare('SELECT * FROM capabilities ORDER BY id').all().map((r) => rowToCapability(r as CapabilityRow));
+    },
+    get(id: string): Capability | null {
+      const r = db.prepare('SELECT * FROM capabilities WHERE id = ?').get(id) as CapabilityRow | undefined;
+      return r ? rowToCapability(r) : null;
+    },
+    /** Create-or-update a capability definition (validated + normalized). Idempotent. */
+    upsert(input: unknown): Capability {
+      const parsed = CapabilityInputSchema.parse(input);
+      const createdAt = this.get(parsed.id)?.createdAt ?? new Date().toISOString();
+      db.prepare('INSERT OR REPLACE INTO capabilities (id, name, description, domain, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        parsed.id,
+        parsed.name,
+        parsed.description ?? '',
+        parsed.domain ?? domainOf(parsed.id),
+        createdAt,
+      );
+      return this.get(parsed.id)!;
+    },
+    remove(id: string): void {
+      db.prepare('DELETE FROM capabilities WHERE id = ?').run(id);
+    },
+  };
+
+  type AgentCapabilityRow = { agent_id: string; capability_id: string; proficiency: number | null; source: string; created_at: string };
+  const rowToAgentCapability = (r: AgentCapabilityRow): AgentCapability => ({
+    agentId: r.agent_id,
+    capabilityId: r.capability_id,
+    proficiency: r.proficiency,
+    source: (r.source as CapabilitySource) ?? 'explicit',
+    createdAt: r.created_at,
+  });
+  const agentCapabilities = {
+    all(): AgentCapability[] {
+      return db.prepare('SELECT * FROM agent_capabilities ORDER BY agent_id, capability_id').all().map((r) => rowToAgentCapability(r as AgentCapabilityRow));
+    },
+    forAgent(agentId: string): AgentCapability[] {
+      return db.prepare('SELECT * FROM agent_capabilities WHERE agent_id = ? ORDER BY capability_id').all(agentId).map((r) => rowToAgentCapability(r as AgentCapabilityRow));
+    },
+    forCapability(capabilityId: string): AgentCapability[] {
+      return db.prepare('SELECT * FROM agent_capabilities WHERE capability_id = ? ORDER BY agent_id').all(capabilityId).map((r) => rowToAgentCapability(r as AgentCapabilityRow));
+    },
+    /** Assign a capability to an agent (validated). Idempotent: re-assigning updates in place. */
+    assign(agentId: string, input: unknown): AgentCapability {
+      const parsed = AgentCapabilityAssignSchema.parse(input);
+      const prior = db.prepare('SELECT created_at FROM agent_capabilities WHERE agent_id = ? AND capability_id = ?').get(agentId, parsed.capabilityId) as { created_at: string } | undefined;
+      const createdAt = prior?.created_at ?? new Date().toISOString();
+      db.prepare('INSERT OR REPLACE INTO agent_capabilities (agent_id, capability_id, proficiency, source, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        agentId,
+        parsed.capabilityId,
+        parsed.proficiency ?? null,
+        parsed.source,
+        createdAt,
+      );
+      return rowToAgentCapability(db.prepare('SELECT * FROM agent_capabilities WHERE agent_id = ? AND capability_id = ?').get(agentId, parsed.capabilityId) as AgentCapabilityRow);
+    },
+    remove(agentId: string, capabilityId: string): void {
+      db.prepare('DELETE FROM agent_capabilities WHERE agent_id = ? AND capability_id = ?').run(agentId, capabilityId);
+    },
+  };
+
+  // ── Company work model (F0.2). Persistence only — validation/orchestration
+  //    live in lib/company/service.ts. No execution here.
+  type MissionRow = {
+    id: string; title: string; objective: string; status: string; priority: string;
+    created_by: string | null; created_at: string; updated_at: string; started_at: string | null; completed_at: string | null;
+  };
+  const rowToMission = (r: MissionRow): Mission => ({
+    id: r.id,
+    title: r.title,
+    objective: r.objective || undefined,
+    status: r.status as Mission['status'],
+    priority: r.priority as Mission['priority'],
+    createdBy: r.created_by ?? undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    startedAt: r.started_at ?? undefined,
+    completedAt: r.completed_at ?? undefined,
+  });
+  const companyMissions = {
+    all(): Mission[] {
+      return db.prepare('SELECT * FROM company_missions ORDER BY created_at DESC, id DESC').all().map((r) => rowToMission(r as MissionRow));
+    },
+    get(id: string): Mission | null {
+      const r = db.prepare('SELECT * FROM company_missions WHERE id = ?').get(id) as MissionRow | undefined;
+      return r ? rowToMission(r) : null;
+    },
+    insert(m: Mission): void {
+      db.prepare(
+        `INSERT OR REPLACE INTO company_missions (id, title, objective, status, priority, created_by, created_at, updated_at, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(m.id, m.title, m.objective ?? '', m.status, m.priority, m.createdBy ?? null, m.createdAt, m.updatedAt, m.startedAt ?? null, m.completedAt ?? null);
+    },
+  };
+
+  type CompanyTaskRow = {
+    id: string; mission_id: string; parent_task_id: string | null; title: string; objective: string; status: string;
+    assigned_agent_id: string | null; workflow_id: string | null; run_id: string | null; priority: string;
+    required_capabilities: string; created_at: string; updated_at: string; started_at: string | null; completed_at: string | null;
+  };
+  const rowToCompanyTask = (r: CompanyTaskRow): CompanyTask => ({
+    id: r.id,
+    missionId: r.mission_id,
+    parentTaskId: r.parent_task_id ?? undefined,
+    title: r.title,
+    objective: r.objective || undefined,
+    status: r.status as CompanyTask['status'],
+    assignedAgentId: r.assigned_agent_id ?? undefined,
+    workflowId: r.workflow_id ?? undefined,
+    runId: r.run_id ?? undefined,
+    priority: r.priority as CompanyTask['priority'],
+    requiredCapabilities: parseJson<string[]>(r.required_capabilities, []),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    startedAt: r.started_at ?? undefined,
+    completedAt: r.completed_at ?? undefined,
+  });
+  const companyTasks = {
+    get(id: string): CompanyTask | null {
+      const r = db.prepare('SELECT * FROM company_tasks WHERE id = ?').get(id) as CompanyTaskRow | undefined;
+      return r ? rowToCompanyTask(r) : null;
+    },
+    forMission(missionId: string): CompanyTask[] {
+      return db.prepare('SELECT * FROM company_tasks WHERE mission_id = ? ORDER BY created_at, id').all(missionId).map((r) => rowToCompanyTask(r as CompanyTaskRow));
+    },
+    insert(t: CompanyTask): void {
+      db.prepare(
+        `INSERT OR REPLACE INTO company_tasks
+          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, priority, required_capabilities, created_at, updated_at, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        t.id, t.missionId, t.parentTaskId ?? null, t.title, t.objective ?? '', t.status, t.assignedAgentId ?? null,
+        t.workflowId ?? null, t.runId ?? null, t.priority, JSON.stringify(t.requiredCapabilities), t.createdAt, t.updatedAt,
+        t.startedAt ?? null, t.completedAt ?? null,
+      );
+    },
+  };
+
+  type CompanyTaskDepRow = { task_id: string; depends_on_task_id: string; created_at: string };
+  const rowToTaskDep = (r: CompanyTaskDepRow): CompanyTaskDependency => ({ taskId: r.task_id, dependsOnTaskId: r.depends_on_task_id, createdAt: r.created_at });
+  const companyTaskDeps = {
+    /** Direct prerequisites of a task (task depends on …). */
+    forTask(taskId: string): CompanyTaskDependency[] {
+      return db.prepare('SELECT * FROM company_task_dependencies WHERE task_id = ? ORDER BY depends_on_task_id').all(taskId).map((r) => rowToTaskDep(r as CompanyTaskDepRow));
+    },
+    /** All dependency edges whose endpoints are tasks in a mission (for cycle checks). */
+    forMission(missionId: string): CompanyTaskDependency[] {
+      return db
+        .prepare(
+          `SELECT d.* FROM company_task_dependencies d
+           JOIN company_tasks t ON t.id = d.task_id
+           WHERE t.mission_id = ? ORDER BY d.task_id, d.depends_on_task_id`,
+        )
+        .all(missionId)
+        .map((r) => rowToTaskDep(r as CompanyTaskDepRow));
+    },
+    add(taskId: string, dependsOnTaskId: string): void {
+      db.prepare('INSERT OR IGNORE INTO company_task_dependencies (task_id, depends_on_task_id, created_at) VALUES (?, ?, ?)').run(taskId, dependsOnTaskId, new Date().toISOString());
+    },
+    remove(taskId: string, dependsOnTaskId: string): void {
+      db.prepare('DELETE FROM company_task_dependencies WHERE task_id = ? AND depends_on_task_id = ?').run(taskId, dependsOnTaskId);
+    },
+  };
+
   const rowToAgentFlow = (r: any): AgentFlow =>
     AgentFlowSchema.parse({
       id: r.id,
@@ -942,6 +1192,13 @@ export function openDb(path: string) {
         .all(workflowId, limit)
         .map((r) => rowToFlowRun(r as FlowRunRow));
     },
+    /** Recent runs across ALL workflows, newest first (Activity stream, U4). Deterministic tiebreak by id. */
+    recent(limit = 50): FlowRun[] {
+      return db
+        .prepare('SELECT * FROM flow_runs ORDER BY created_at DESC, id DESC LIMIT ?')
+        .all(limit)
+        .map((r) => rowToFlowRun(r as FlowRunRow));
+    },
     update(id: string, patch: Partial<Pick<FlowRun, 'status' | 'currentNodeId' | 'startedAt' | 'endedAt' | 'errorCode' | 'errorMessage' | 'totalTokens' | 'estimatedCost'>>): FlowRun | null {
       const cur = this.get(id);
       if (!cur) return null;
@@ -1034,6 +1291,13 @@ export function openDb(path: string) {
     },
     forRun(runId: string): FlowNodeRun[] {
       return db.prepare('SELECT * FROM flow_node_runs WHERE run_id = ? ORDER BY created_at').all(runId).map((r) => rowToNodeRun(r as FlowNodeRunRow));
+    },
+    /** Recent node runs across ALL runs, newest first (Activity stream, U4). Deterministic tiebreak by id. */
+    recent(limit = 50): FlowNodeRun[] {
+      return db
+        .prepare('SELECT * FROM flow_node_runs ORDER BY created_at DESC, id DESC LIMIT ?')
+        .all(limit)
+        .map((r) => rowToNodeRun(r as FlowNodeRunRow));
     },
     update(
       id: string,
@@ -1196,6 +1460,17 @@ export function openDb(path: string) {
     pending(limit = 100): FlowApproval[] {
       return db
         .prepare("SELECT * FROM flow_approvals WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?")
+        .all(limit)
+        .map((r) => rowToApproval(r as FlowApprovalRow));
+    },
+    /**
+     * Recent approvals across ALL runs (any status), most-recently-changed first —
+     * so a just-resolved approval surfaces in the Activity stream (U4). Ordered by
+     * updated_at (resolution bumps it), deterministic tiebreak by id.
+     */
+    recent(limit = 50): FlowApproval[] {
+      return db
+        .prepare('SELECT * FROM flow_approvals ORDER BY updated_at DESC, id DESC LIMIT ?')
         .all(limit)
         .map((r) => rowToApproval(r as FlowApprovalRow));
     },
@@ -2013,6 +2288,11 @@ export function openDb(path: string) {
     departments,
     agents,
     customAgents,
+    capabilities,
+    agentCapabilities,
+    companyMissions,
+    companyTasks,
+    companyTaskDeps,
     agentFlows,
     flowWorkflows,
     flowVersions,

@@ -10,8 +10,8 @@ describe('shared nav config', () => {
     );
   });
 
-  test('Agents group holds the roster and the org chart', () => {
-    expect(NAV_AGENTS.map((n) => n.href)).toEqual(['/agents', '/tasks', '/skills', '/org']);
+  test('Agents group holds the roster, the org chart, and company Missions (V2)', () => {
+    expect(NAV_AGENTS.map((n) => n.href)).toEqual(['/agents', '/tasks', '/skills', '/org', '/missions']);
   });
 
   test('Intelligence group holds G-Brain, Flows, Approvals, and Models', () => {
@@ -51,8 +51,10 @@ describe('shared nav config', () => {
     expect(hrefs.indexOf('/funnel')).toBeLessThan(hrefs.indexOf('/social'));
   });
 
-  test('CommandPalette consumes the shared DIGIT_VIEWS (no private stale copy)', () => {
-    const src = readFileSync(path.join(process.cwd(), 'components', 'CommandPalette.tsx'), 'utf8');
+  test('Commander consumes the shared DIGIT_VIEWS (no private stale copy)', () => {
+    // U2: the Commander superseded CommandPalette as the Ctrl/Cmd+K surface and
+    // now owns the digit (1–9) jumps — it must still use the shared nav order.
+    const src = readFileSync(path.join(process.cwd(), 'components', 'Commander.tsx'), 'utf8');
     expect(src).toMatch(/from '@\/lib\/nav'/);
     expect(src).not.toMatch(/const DIGIT_VIEWS\s*=/); // must import, not redefine
   });

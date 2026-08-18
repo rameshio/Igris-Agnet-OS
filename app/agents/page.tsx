@@ -12,6 +12,9 @@ import { AgentActivityFeed } from '@/components/AgentActivityFeed';
 import { AgentCostAnalysis } from '@/components/AgentCostAnalysis';
 import { AgentWorkPanel } from '@/components/AgentWorkPanel';
 import { recentActivity } from '@/lib/agents/activity';
+import { buildAgentPresence } from '@/lib/agents/presence-service';
+import { AgentPresencePoller, AgentPresenceTag } from '@/components/AgentPresence';
+import type { AgentPresence } from '@/lib/agents/presence';
 import { SparkIcon } from '@/components/SparkIcon';
 import { Badge, Dot, Label, SectionHead } from '@/components/terminal';
 import { lifeAreaForDepartment } from '@/lib/life-map';
@@ -44,6 +47,7 @@ function AgentRosterCard({
   agent,
   parent,
   lastRun,
+  presence,
   tasks,
   crons,
   messages,
@@ -51,6 +55,7 @@ function AgentRosterCard({
   agent: Agent;
   parent: Agent | null;
   lastRun: AgentRun | undefined;
+  presence: AgentPresence;
   tasks: AgentTask[];
   crons: AgentCron[];
   messages: AgentMessage[];
@@ -96,6 +101,10 @@ function AgentRosterCard({
           <span className="truncate">{parent ? `under ${parent.name}` : `instance ${agent.instance}`}</span>
           <span className="shrink-0 uppercase tracking-wider">{agent.status}</span>
         </div>
+        {/* Operational presence (U5) — derived from real run/node/approval state. */}
+        <div className="mb-3">
+          <AgentPresenceTag agentId={agent.id} initial={presence} />
+        </div>
         {lastRun && (
           <div className="flex items-baseline gap-1.5 font-mono text-[10px] leading-snug text-os-dim">
             <span className={`font-bold ${lastRun.ok ? 'text-os-ok' : 'text-os-err'}`}>
@@ -121,6 +130,9 @@ export default function AgentsPage() {
   const agentsById = new Map(agents.map((a) => [a.id, a]));
   const agentNames = Object.fromEntries(agents.map((a) => [a.id, a.name]));
   const activity = recentActivity(db, 40);
+  const presenceList = buildAgentPresence(db);
+  const presenceByAgent = new Map(presenceList.map((p) => [p.agentId, p]));
+  const presenceFor = (id: string): AgentPresence => presenceByAgent.get(id) ?? { agentId: id, state: 'idle', label: 'Idle' };
   const runs = db.agentRuns.recent(1000);
   const totalRuns = runs.length;
   const allTasks = db.agentTasks.all();
@@ -138,6 +150,8 @@ export default function AgentsPage() {
           embedded from whatever host HERMES_DASH_URL points at. Unset in the
           demo, so the tab reports "not configured" instead of a dead frame. */}
       <AgentsTabs hermesUrl={runtimeEnv().HERMES_DASH_URL}>
+      {/* One shared, bounded poll drives every card's presence dot (U5). */}
+      <AgentPresencePoller initial={presenceList} />
       <div className="mb-6">
         <ConductorChat agentNames={agentNames} />
       </div>
@@ -194,6 +208,7 @@ export default function AgentsPage() {
                     agent={agent}
                     parent={agent.parentId ? agentsById.get(agent.parentId) ?? null : null}
                     lastRun={db.agentRuns.byAgent(agent.id)[0]}
+                    presence={presenceFor(agent.id)}
                     tasks={allTasks.filter((t) => t.agentId === agent.id)}
                     crons={allCrons.filter((c) => c.agentId === agent.id)}
                     messages={db.agentMessages.byAgent(agent.id)}

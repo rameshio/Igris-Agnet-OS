@@ -3,11 +3,14 @@ import { JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
-import { CommandPalette } from '@/components/CommandPalette';
+import { Commander } from '@/components/Commander';
 import { ConductorPanel } from '@/components/ConductorPanel';
+import { ActivityDock } from '@/components/ActivityDock';
+import { ContextRouteSync } from '@/components/ContextRouteSync';
 import { getDb } from '@/lib/data';
 import type { Command } from '@/lib/palette';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
+import { NAV_INIT_SCRIPT } from '@/lib/layout-prefs';
 
 const fontMono = JetBrains_Mono({
   subsets: ['latin'],
@@ -59,12 +62,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* Apply the persisted theme before first paint — no dark↔light flash. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {/* Apply the persisted sidebar width before first paint — no layout flash. */}
+        <script dangerouslySetInnerHTML={{ __html: NAV_INIT_SCRIPT }} />
       </head>
       <body>
+        <ContextRouteSync />
         <Sidebar />
         {/* os-shell yields to the Conductor dock: the panel sets --conductor-w
             and the whole content column glides left instead of being covered */}
-        <div className="os-shell ml-[232px] flex min-h-screen min-w-0 flex-col" style={{ marginRight: 'var(--conductor-w, 0px)' }}>
+        <div className="os-shell ml-[var(--nav-w,232px)] flex min-h-screen min-w-0 flex-col transition-[margin] duration-150" style={{ marginRight: 'calc(var(--conductor-w, 0px) + var(--activity-w, 0px))' }}>
           <Topbar />
           <main className="min-w-0 flex-1 px-8 pb-16 pt-7 wide:px-10 ultra:px-12">
             {/* Width tiers: 1280 on laptops · 1760 on large monitors ·
@@ -74,9 +80,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </main>
         </div>
-        <CommandPalette commands={buildCommands()} />
+        {/* U2: the unified Commander (Ctrl/Cmd+K) supersedes the old CommandPalette. */}
+        <Commander commands={buildCommands()} />
         {/* Notion-style agent dock — the Conductor, aware of the current screen */}
         <ConductorPanel />
+        {/* U4: read-only Activity / Ops stream (right dock, collapsible) */}
+        <ActivityDock />
       </body>
     </html>
   );

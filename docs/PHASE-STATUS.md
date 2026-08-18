@@ -46,6 +46,22 @@
 - **Decisions:** see `docs/DECISIONS.md` D20 (durable gate separate from Decision; approve/reject routing; no upstream rerun; idempotency + resume lock; backend-authoritative endpoints; Hermes continuation deferred).
 - **Limitations:** no approval expiry/TTL (`expired` status defined but unused); no auth layer (resolver actor `local_operator`); Hermes-session approval continuation deferred; sequential execution unchanged.
 
+## Architecture V2 — company registry + company work model (runs alongside the product phases)
+
+### V2-F0.1 — Company Registry — Capability layer ✅ complete
+- **Purpose:** first-class capabilities (`domain.action`) over the existing agent registry + a deterministic resolver so the F1 Manager can find workers by capability.
+- **Files:** `lib/agents/capabilities.ts`, `lib/db.ts` (additive), `lib/agents/registry.ts`, `app/api/capabilities/route.ts`, `app/api/agents/[id]/capabilities/route.ts`, `app/api/agents/resolve/route.ts`.
+- **DB:** additive `capabilities` + `agent_capabilities` + index. No FK.
+- **Limitations:** no built-in capability seeding; no derived inference; registry/data/resolution only — no execution.
+
+### V2-F0.2 — Mission + Company Task canonical model ✅ complete
+- **Purpose:** canonical company-work layer (Mission = objective, Company Task = work unit) DISTINCT from the existing `agent_tasks` kanban. Data model + services + narrow APIs + minimal Missions UI + F0.1 capability-assisted manual assignment + optional dependencies.
+- **Major changes:** pure model (`lib/company/model.ts`) — types, Zod schemas, status enums + guarded transitions, graph helpers (parent-tree + dependency-DAG cycle guard), mission summary, prerequisite check. Service (`lib/company/service.ts`) — canonical create/read/update boundary composing repos + pure model + F0.1 resolver; CompanyError + HTTP status mapping. Missions Board UI + page.
+- **Files:** `lib/company/{model,service}.ts`; `app/api/missions/{route,[id]/route,[id]/tasks/route}.ts`; `app/api/company-tasks/[id]/{route,assign/route,dependencies/route,eligible-agents/route}.ts`; `components/MissionsBoard.tsx`; `app/missions/page.tsx`.
+- **DB:** additive `company_missions` + `company_tasks` + `company_task_dependencies` + 6 indexes. Cross-subsystem references validated in service, not FK.
+- **Decisions:** see `docs/DECISIONS.md` (Mission ≠ agent_tasks; F0.2 stores + organizes only; manual assignment is capability-compat-checked; dependencies same-mission + acyclic; workflow/run seams validated but never executed; no auto-completion).
+- **Limitations:** no planning/decomposition/auto-assignment/delegation/execution (F1); no approval integration from `waiting_approval` status; no pagination; no soft-delete.
+
 ## HRA-2 — Hermes Runtime Architecture V2 (runs alongside the product phases)
 
 A staged migration of the Hermes integration from the ACP stdio process toward Hermes's own
@@ -94,6 +110,10 @@ A staged migration of the Hermes integration from the ACP stdio process toward H
 | Human approval (durable pause/resume) | LIVE (Phase E) | `lib/flows/{approvals,engine}.ts`, `flow_approvals`, `app/api/flow-approvals/*`, `ApprovalsInbox.tsx` | Idempotent; survives restart; no upstream rerun; routes like Decision |
 | Memory nodes | PLANNED Phase F | — | No auto-save today |
 | Retries / error routes / cancel | PLANNED Phase G | — | Fail-fast only today |
+| Company Missions + Tasks (V2-F0.2) | LIVE | `lib/company/*`, `/api/missions/*`, `/api/company-tasks/*`, `MissionsBoard.tsx` | Data + organizing only; distinct from `agent_tasks` |
+| Capability-assisted manual assignment (V2-F0.2) | LIVE | `lib/company/service.ts` `assignTask` | F0.1 resolver `mode: all`; 409 if incompatible |
+| Task dependencies (V2-F0.2) | LIVE | `lib/company/service.ts`, `/api/company-tasks/:id/dependencies` | Same-mission, acyclic, idempotent; read-only `prerequisitesSatisfied` |
+| Eligible-agent resolution (V2-F0.2) | LIVE | `/api/company-tasks/:id/eligible-agents` | F0.1 resolver over task's required capabilities |
 | Legacy Agent Flow canvas + API | LEGACY | `AgentFlowCanvas.tsx`, `/api/agent-flows`, `flow-run.ts` | Kept for compat; not surfaced on `/brain` |
 
 ## Architectural invariants — DO NOT BREAK
@@ -120,3 +140,5 @@ A staged migration of the Hermes integration from the ACP stdio process toward H
 20. **Missing references fail clearly** (`workflow_reference_not_found`) — never silently substitute empty/undefined. Reference lookup is read-only and rejects `__proto__`/`prototype`/`constructor`.
 21. **Decision is machine logic** (deterministic, no LLM by default); Human Approval (Phase E) is the separate human gate. A node reachable by no ACTIVE edge is **skipped, not failed**; a node that errors while executing is **failed**.
 22. **Transform is declarative only** — data reshape via references; never arbitrary scripting.
+23. **Company Tasks are NOT agent_tasks.** The `company_missions`/`company_tasks`/`company_task_dependencies` schema (F0.2) is a SEPARATE system from the existing lightweight `agent_tasks` kanban. F0.2 code NEVER reads, writes, renames, or migrates `agent_tasks` data. The two coexist — `/tasks` is the kanban, `/missions` is the company-work layer.
+24. **F0.2 stores and organizes work only.** It does NOT plan, decompose, auto-assign, delegate, or execute. `workflowId` is a reference seam; `runId` is F1's execution seam; `waiting_approval` never creates a `flow_approvals` row. That is F1.

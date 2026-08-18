@@ -130,6 +130,98 @@ See §12 for the full table inventory.
 
 ---
 
+## 6b. Company Registry — Capability layer (Architecture V2 · F0.1)  ✅
+
+A first-class **Capability** layer over the SAME registry (built-in roster +
+custom agents), so future Manager logic (F1) can ask *"which agents can perform
+capability X?"* by capability instead of loading/reasoning over the whole roster.
+This checkpoint is **registry / data / resolution only** — no task assignment, no
+delegation, no agent creation, **no execution**.
+
+- **The four distinct concepts (kept explicit):**
+  - **Capability** — WHAT WORK an agent CAN perform (`domain.action`, e.g.
+    `email.summarize`). *Can perform.*
+  - **Skill** — reusable instructions/behavior that may SUPPORT a capability.
+  - **Tool** — an external/local mechanism (Gmail) that may SUPPORT a capability.
+  - **Model** — the intelligence the agent thinks on.
+  - **Permission** — whether the agent is AUTHORIZED to do it. **A capability is
+    NOT a permission**: `email.send` as a capability means the agent *can* draft/send,
+    never that it *may* without the Phase-E Human **Approval** that authorizes it.
+- **Model** (`lib/agents/capabilities.ts`, pure + unit-tested): `Capability {id,
+  name, description?, domain?}`; `AgentCapability {agentId, capabilityId,
+  proficiency?, source}`. Capability ids are stable machine ids — lowercase,
+  trimmed, `domain.action` (validated; malformed rejected). `proficiency` is
+  optional 0–100 CONFIG metadata (not measured performance; unrated = neutral 50
+  for ranking, `null` in output).
+- **Persistence** (`lib/db.ts`, additive + idempotent): `capabilities` and
+  `agent_capabilities` tables. `agent_id` is the **canonical RuntimeAgent id**
+  (built-in OR `custom-*`) — deliberately **not an FK**, since built-ins are code
+  (not rows) and custom agents live in a different table; this keeps one scheme
+  that works for both. No existing agent/skill/tool field was changed.
+- **Registry service** (`lib/agents/registry.ts`): `getAgentById`,
+  `getCapabilitiesForAgent`, `getAgentsForCapability`, and the reusable
+  **`resolveAgentsForCapabilities(db, required, {mode})`** the F1 Manager will call.
+- **Resolver** — deterministic, **exact-id matching only (no LLM/embedding
+  inference)**. `mode: 'all'` (default) requires every capability; `'any'` for
+  discovery. Ranking: coverage → explicit-over-derived → proficiency → stable
+  name/id tie-break. It answers **WHO COULD DO THIS**, never GO DO THIS — output
+  is SAFE metadata only (agentId, name, matched/missing, proficiency, score) with
+  no prompts, tools, or secrets.
+- **APIs** (Zod, read + registry-mutation only, no execution): `GET/POST
+  /api/capabilities`; `GET/POST/DELETE /api/agents/:id/capabilities`; read-only
+  `GET /api/agents/resolve?capabilities=…&mode=…`. React never touches SQLite.
+- **Not built in F0.1** (deferred): built-in-agent capability seeding (left
+  unassigned rather than guessed), `reportsTo`/lifecycle columns (`parentId`
+  already carries reporting today), Missions/Tasks (F0.2), Manager (F1), Factory
+  (F2). See `docs/CHANGE-LOG.md` UX/F0.1 record.
+
+### 6c. Mission + Company Task canonical model (Architecture V2 · F0.2) ✅
+
+The **company-work layer**: Mission (company-level objective) + Company Task (work
+unit). DISTINCT from the existing lightweight `agent_tasks` kanban (untouched).
+
+- **Definitions:** `MISSION` = company-level objective. `COMPANY TASK` = unit of
+  work required to complete a Mission. `AGENT` = employee (F0.1 registry).
+  `WORKFLOW` = SOP. `RUN` = execution. F0.2 STORES and ORGANIZES work only — it
+  does NOT plan, decompose, assign automatically, delegate, or execute. That is F1.
+- **Pure model** (`lib/company/model.ts`): types, Zod input/update schemas with
+  capability-id normalization, status enums with guarded transitions
+  (`MISSION_TRANSITIONS`, `TASK_TRANSITIONS` — explicit manual updates only, never
+  auto-driven), terminal-state detection, graph helpers (DFS reachability + cycle
+  guard reused for parent tree AND dependency DAG), mission summary (task rollup by
+  status — never auto-completes), prerequisite check (read-only — never auto-starts).
+- **Service** (`lib/company/service.ts`): canonical create/read/update boundary
+  composing the persistence repos, the pure model, and the F0.1 capability resolver.
+  `CompanyError` carries an HTTP status for the API routes. Functions: `createMission`,
+  `getMission`, `listMissions`, `updateMission`, `missionSummary`;
+  `createCompanyTask`, `getCompanyTask`, `listTasksForMission`, `updateCompanyTask`,
+  `setTaskCapabilities`; `getEligibleAgentsForTask` (F0.1 `resolveAgentsForCapabilities`
+  `mode: all`); `assignTask` (capability-compatibility-checked manual assignment —
+  409 if the agent lacks required capabilities); `addTaskDependency`,
+  `removeTaskDependency`, `getTaskDependencies` (prerequisites + `satisfied` flag).
+- **Parent/subtask:** same-mission only; reparenting cycle-rejected via DFS.
+- **Dependencies:** same-mission only; self-dep rejected; cycle-rejected; idempotent
+  (PK); `prerequisitesSatisfied` is read-only — F0.2 never auto-transitions a task.
+- **Workflow/Run seams:** `workflowId` is a validated SOP reference (never runs);
+  `runId` is F1's future execution reference (never created here).
+  `waiting_approval` never creates a Phase-E `flow_approvals` row.
+- **DB** (additive/idempotent): `company_missions`, `company_tasks`,
+  `company_task_dependencies` + 6 indexes. Cross-subsystem references validated in
+  the service layer, not by FK, matching the repo canonical-id strategy.
+- **APIs** (Zod, narrow, no execution): `GET/POST /api/missions`; `GET/PATCH
+  /api/missions/:id`; `GET/POST /api/missions/:id/tasks`; `GET/PATCH
+  /api/company-tasks/:id`; `POST /api/company-tasks/:id/assign`; `GET/POST/DELETE
+  /api/company-tasks/:id/dependencies`; read-only `GET
+  /api/company-tasks/:id/eligible-agents`. React never touches SQLite.
+- **UI:** `/missions` page + `MissionsBoard.tsx` (compact admin surface: create
+  missions, break into tasks, set required capabilities, view eligible agents,
+  manually assign, add dependencies, change statuses).
+- **Not built in F0.2** (deferred): F1 Manager planning/decomposition, automatic
+  assignment/delegation, Agent Factory (F2), G-Brain F3, pagination, soft-delete.
+  See `docs/CHANGE-LOG.md` V2-F0.2 record.
+
+---
+
 ## 7. Model architecture
 
 Agents are never bound to one provider. An agent carries a **strategy**; a router resolves it
@@ -390,6 +482,216 @@ stay operational during the transition.
   is an explicit per-node choice (read/write/mode), conservative by default. Transient run data
   stays in run history unless promoted (Phase F).
 
+## 9f. Commander Home (UX Foundation U6)  ✅ — UX Foundation complete
+
+Home (`/`) is now the AI-native OPERATING SURFACE: a briefing + the Commander
+entry + a summary of REAL operational state — **not** an analytics dashboard and
+**not** a second command system. UX ladder: U1 ✅ Context Envelope · U2 ✅
+Commander · U3 ✅ Preview/Execute · U4 ✅ Activity · U5 ✅ Approval Cards + Agent
+Presence · **U6 ✅ Commander Home**. **UX Foundation is complete; Phase F is next
+(NOT started).**
+
+- **One composed projection, zero new truth.** `lib/home/service.ts`
+  (`buildHomeSnapshot`) COMPOSES the existing read-only services into one bounded
+  `HomeSnapshot` and duplicates no business logic: U5 `buildApprovalCards` →
+  pending approvals (the SAFE projection — never `context_json`); U4
+  `buildActivityFeed` → the recent feed; the `flowRuns` repo → running / active /
+  recently-failed; `allRuntimeAgents` → agent count; the `meta` KV → Hermes
+  status. Pure logic (greeting, summary line, first-run rule, Hermes
+  classification, nav targets) lives in `lib/home/model.ts` and is fully
+  unit-tested. Read-only `GET /api/home`; Home polls that **single** endpoint
+  (`HOME_POLL_MS`=8s, no-overlap) rather than firing many unrelated requests.
+- **Commander entry.** A large lightweight command bar OPENS the existing U2
+  Commander via the global `alex:palette` event (now optionally carrying
+  `detail.prefill`, so a command typed on Home hands off prefilled — one command
+  system, no duplicate input; an empty dispatch behaves exactly as before). Home
+  never executes an action itself.
+- **Needs You / Running / Recent.** Needs You = pending approvals + failures
+  within a defined recent window (`HOME_RECENT_FAILURE_MS`=24h) — never "all
+  historical failures". Running = flow runs whose status is genuinely `running`
+  (a `waiting_approval` run is surfaced under Needs You, not Running, and is
+  counted as active). Recent = the bounded U4 feed. Every item links to its
+  existing canonical surface (`/approvals` · `/flows` · `/agents` · navHrefForEvent);
+  *View all activity* opens the U4 dock via `igris:activity`. Caps: Needs You /
+  Running ≤5, Recent ≤5.
+- **System strip (honest, cheap).** Hermes status is derived from CHEAP cached
+  signals only — `activeLlmProviderName()` + the `hermes_runtime_last_check` /
+  `_last_success` meta recorded by the Settings panel — and **never probes the
+  binary**, so it is safe to poll; it is **never green when unknown** (`ok`
+  requires a recorded success at least as new as the last check; a newer check
+  without success ⇒ `err`; no check ever ⇒ `unknown`). Agents = real runtime
+  agents (built-in + custom). Active runs = running + waiting-on-approval.
+  Approvals = pending only. Failures = the defined recent window (documented).
+- **Greeting (hydration-safe).** Deterministic `greetingForHour`; the page renders
+  the server-time value for SSR + first client render (they match), then a mount
+  effect re-derives it from LOCAL time — no hydration mismatch (the U1 rule).
+- **Empty / first-run.** A quiet workspace shows an honest "all caught up" line
+  (no fabricated activity). A genuinely empty workspace (no workflows, custom
+  agents, or runs) shows a compact *Start with IGRIS* mission that links to
+  existing pages — **not** a full onboarding wizard.
+- **Privacy.** Every `HomeSnapshot` field is an identifier + safe label + coarse
+  status only — never secrets/tokens, prompts, LLM outputs, tool args, email
+  bodies, or raw `context_json` (approvals come from the U5 safe projection;
+  enforced by a leak-canary test). The old business-analytics dashboard was moved
+  OFF Home to its dedicated pages (`/social`, `/integrations`, `/comms`, `/brain`,
+  `/roadmap`, `/agents`) — no business functionality was deleted.
+
+## 9e. Approval Decision Cards + Agent Presence (UX Foundation U5)  ✅
+
+Two read-only PROJECTIONS over existing authoritative state — **no new table, no
+mutation, no fabricated status, no second source of truth**. UX ladder: U1 ✅
+Context Envelope · U2 ✅ Commander · U3 ✅ Preview/Execute · U4 ✅ Activity ·
+**U5 ✅ Approval Cards + Agent Presence**. Next: **U6 Commander Home** (not
+started); **Phase F** (not started).
+
+**Part A — Approval Decision Cards.** `lib/flows/approval-view.ts` (pure,
+unit-tested) turns a Phase-E `FlowApproval` into an `ApprovalDecisionView` that
+answers *what/why/if-approved/if-rejected/where/risk*. It is built from the SAFE
+approval subset only and **never reads `context_json`** (the raw blob is not even
+a field on the view — enforced by tests). Risk is a conservative, deterministic
+heuristic (`approvalRisk`): a per-request-type floor (`workflow`→low,
+`hermes`→medium, `tool`/`sudo`/`secret`→high) combined with a downstream
+classification of the immutable version graph (`classifyDownstream`: an agent
+reachable on the approve route → `agent`/medium; a tool node or an external
+`output` (`notify`) → `external`/high; only internal nodes → low; **no graph →
+`unknown`/medium**). The two are combined as the HIGHER of the two, so risk is
+**never under-claimed**; ambiguity resolves to medium, never a guessed low. The
+service `lib/flows/approval-cards.ts` (`buildApprovalCards`) reads
+`flowApprovals.pending` + `.recent` (bounded), resolves the workflow name +
+downstream from the version graph (cached per `workflow@version`, mirroring §9d),
+and exposes `{ pending, resolved }` via read-only `GET /api/flow-approvals/cards`
+(the legacy `GET /api/flow-approvals` list is untouched for Phase-E compat).
+`components/ApprovalsInbox.tsx` renders pending cards **visually stronger** than
+resolved history (resolved cards are inspectable but their approve/reject actions
+are absent). **Approval semantics are unchanged:** resolving still POSTs only the
+id + decision + note to the existing `…/approve|reject` endpoints; the backend
+resolves the run/routes and resumes. Selecting a card publishes
+`approvalId`/`runId`/`workflowId` into the U1 envelope (identifiers only), so the
+**existing** Commander "approve this" (§9c) works with no new Commander logic.
+
+**Part B — Agent Presence.** `lib/agents/presence.ts` (pure, unit-tested) is a
+minimal canonical state — `idle | working | waiting_approval | failed` — reduced
+from `PresenceSignal`s with a deterministic **precedence** (currently-running node
+→ waiting approval on the agent's run → latest failure → idle) and a **recency
+window** (`PRESENCE_RECENCY_MS`, 6h) that guards both ways: an ancient failure
+never sticks, and a stale "running" (a crashed run never marked terminal) decays
+to idle. The service `lib/agents/presence-service.ts` (`buildAgentPresence`)
+derives signals from REAL rows only: a `running` agent node-run → working; a
+`failed` agent node-run → failed; a `pending` approval on a run the agent
+**actually participated in** (it has an agent node-run in that run) →
+waiting_approval. Agent identity is resolved authoritatively (node → its run's
+immutable version graph → `config.agentId`, cached — the same resolution as §9d);
+when it can't be resolved, **no signal is emitted** (the relationship is never
+guessed). Read-only `GET /api/agents/presence` returns one bounded snapshot for
+the whole roster (**never a request per agent**); a single `AgentPresencePoller`
+seeds a `useSyncExternalStore` module store (`lib/agents/presence-store.ts`) from
+server-computed presence and polls every 6s, fanning out to each card's
+`AgentPresenceTag` — one shared request. SSR-safe (server snapshot empty → the
+deterministic `initial` prop paints first, then live data swaps in — the U1
+hydration rule). Presence text is understandable without color (a glyph + a word
+precede the dot). `/agents` cards gain the presence tag; the Agent Builder /
+config editing is untouched.
+
+**Consistency with U4:** presence reuses the same authoritative node→agent
+resolution and the same `running`/`failed`/`waiting_approval` vocabulary as the
+Activity stream — a dedicated agent-centric projection (cleaner than contorting
+`ActivityEvent` into an agent-state model), not a competing definition.
+
+## 9d. Activity / Ops Stream (UX Foundation U4)  ✅
+
+- **A read-only operational PROJECTION, not a source of truth.** `lib/activity/service.ts`
+  (`buildActivityFeed`) reads bounded rows from the existing repositories
+  (`flowRuns.recent` / `flowApprovals.recent` / `flowNodeRuns.recent`) and hands the pure,
+  unit-tested `lib/activity/model.ts` small sanitized `*Lite` shapes; the model normalizes them
+  into an `ActivityEvent[]`. There is **no `activity` table** and **no mutation** — the stream
+  can always be rebuilt from run/approval state.
+- **Flow:** `repositories → buildActivityFeed → pure builders → sort(newest-first, id-tiebreak) →
+  filter → cap`. One bounded query per source + in-memory merge (cheap at current scale; see the
+  scaling note below). React never touches SQLite; the panel reads `GET /api/activity?limit=50`
+  (Zod, hard cap `ACTIVITY_MAX_LIMIT=200`).
+- **Events (honest, from existing truth only):** run started/completed/failed/waiting_approval/
+  canceled/interrupted; approval requested/approved/rejected; node & agent **failures** as errors;
+  agent running/completed/failed **only when the agentId resolves** authoritatively (node run → its
+  run's immutable version graph → the agent node's `config.agentId` → runtime agent name). Unresolved
+  agent identity is never guessed — it stays a workflow/node event. Trivial non-agent node successes
+  are intentionally dropped (no flooding).
+- **Privacy (load-bearing):** an `ActivityEvent` holds identifiers + safe labels + a coarse status
+  only — never secrets/tokens, prompts, LLM outputs, tool arguments, email bodies, `secret.request`
+  payloads, or raw `context_json`; error messages are truncated. Enforced by tests.
+- **Panel:** a collapsible right dock (`components/ActivityDock.tsx`) mounted globally in the layout.
+  It polls every 6s with a no-overlap guard (`canStartPoll`), stops on unmount/collapse, surfaces
+  *Activity unavailable / Retry* on failure and never shows stale data as fresh. Collapse persists in
+  `localStorage` (hydration-safe: SSR = collapsed, preference hydrated in a mount effect); width is a
+  `--activity-w` CSS var that composes with the Conductor dock (`calc(--conductor-w + --activity-w)`),
+  so the main surface grows when collapsed. Clicking an item navigates to the canonical surface
+  (`/flows` / `/approvals` / `/agents`) — no new routing. Commander GO opens it via
+  *"show activity" / "show errors"*.
+- **Scaling note:** the aggregator over-fetches `limit×2` per source then sorts+caps in memory. At
+  current volumes this is trivial; if run history grows large, add a UNION-ordered SQL query or a
+  cursor rather than widening the per-source fetch.
+- **Reuse:** the same API/view-model is designed so a future Home recent-activity strip can consume a
+  small subset (`?limit=&filter=`) without new plumbing.
+
+## 9c. Commander DO lane — Plan → Preview → Execute (UX Foundation U3)  ✅
+
+- `lib/commander-actions.ts` (pure, fully unit-tested) is the **only** place the DO lane turns intent
+  into a side effect, and it does so through a hard funnel:
+  `text → recognizeCommanderAction() → previewPlan() (GET) → build*Preview() → [explicit human confirm] → executePlan() (existing mutation) → format*Result()`.
+- **Typed allow-list.** Actions are one of `run_workflow | publish_workflow | delete_workflow |
+  resolve_approval | set_hermes_transport`. The LLM/Conductor may only *select* a registered type;
+  `executePlan`/`previewPlan` derive method+route+body from the typed action alone (ids URL-encoded).
+  There is **no** `{endpoint, method, body}` path, no arbitrary URL/SQL/shell; unknown ids are rejected.
+- **Context-grounded.** A proposal is produced only when its required U1 context is present
+  (`run/publish/delete` need `workflowId`; `resolve_approval` needs `approvalId`). Missing context is
+  reported honestly — never guessed.
+- **Authoritative preview.** Preview cards are built from live backend reads (`GET /api/flows/:id`
+  incl. the additive `draftValidation`, `GET /api/flow-approvals/:id`, `GET /api/settings/hermes-runtime`),
+  never from raw text. Each shows target, effects, an explicit **risk** (medium: run/publish/switch;
+  high: delete/approve — raised, never under-claimed, when downstream effects are unknown), and honest
+  blockers that **disable Confirm** (never-published, invalid draft, already-resolved approval, serve
+  ineligible + reasons).
+- **Explicit confirm only.** `Ctrl/Cmd+Enter` (or Confirm) executes; **plain Enter only builds the
+  preview**. A double-submit guard disables Confirm while executing (backend idempotency is still the
+  authority). Results are honest — run id + Open, archive-vs-delete mode, "already resolved", or a
+  verbatim failure with reasons; **no silent fallback**. `Esc` cancels a preview / clears a result but
+  never aborts an in-flight mutation.
+- **Reuse, not duplication.** Confirmed actions call the **existing** Phase C/E/HRA-2 endpoints — the
+  Commander duplicates no business logic and adds no generic execute endpoint. Human Approval is
+  untouched: Commander **never auto-approves**; `approve this` previews then calls the same
+  backend-authoritative approve/reject route.
+
+## 9b. Commander — the global command surface (UX Foundation U2)  ✅
+
+- `components/Commander.tsx` (logic in the pure, tested `lib/commander.ts`) is the **canonical
+  global `Ctrl/Cmd+K` surface**. It **unifies** the two prior systems rather than adding a third
+  brain: **GO** reuses the palette search (`lib/palette.filterCommands`) over `lib/nav`-derived page
+  commands + agent/tool commands; **ASK** reuses the existing Conductor chat
+  (`/api/agents/conductor/chat`), grounded with the U1 envelope as **identifiers only**; **DO** is
+  the typed Plan→Preview→Execute lane (see §9c) — it is preview-gated and only executes on an explicit
+  human confirm.
+- **Ownership:** the Commander is now the single ⌘K command surface (the old `CommandPalette` was
+  removed, its digit-jump/search behavior absorbed). The **Conductor dock** remains as the long-lived
+  conversation presentation of the **same** Conductor brain — not a competing command interface.
+- **Safety (load-bearing):** GO navigation (non-destructive) may run immediately; ASK cannot mutate;
+  **DO executes only through the U3 preview→confirm funnel** (§9c) — never on plain Enter, never from
+  GO/ASK. No secrets ever enter Commander context. All classification/resolution is deterministic +
+  unit-tested.
+
+## 9a. Context Envelope (UX Foundation U1)  ✅
+
+- `lib/context-envelope.ts` is a **read-only, app-wide record of what the user is currently looking
+  at** — `route` + `surface` plus a few identifiers/flags (`workflowId`, `workflowVersion`,
+  `workflowDraft`, `selectedNodeId`, `selectedEdgeId`, `runId`, `agentId`, `approvalId`). It exists so
+  a future AI surface (the **Commander**, U2) can resolve "this workflow / this node / this run"
+  **without importing any page-specific store**.
+- **Boundary (load-bearing):** context ONLY. It never executes, fetches, saves, publishes, runs, or
+  mutates a draft, and it **never** carries secrets/tokens, graphs, node config, prompts, LLM outputs,
+  or tool arguments (an `ENVELOPE_KEYS` allow-list is test-enforced).
+- **Mechanism:** a minimal `useSyncExternalStore` singleton (no new dependency), read via
+  `useIgrisContext()`. `ContextRouteSync` (root layout) publishes route+surface and clears stale entity
+  ids when the surface changes; `FlowCanvas` publishes its selection and clears on close. Pure
+  transition functions (`applyRoute`/`applyFlow`/`clearFlow`/…) hold the logic and are unit-tested.
+
 ---
 
 ## 10. Security & human-in-the-loop
@@ -423,6 +725,7 @@ stay operational during the transition.
 |---|---|---|
 | `custom_agents` | Client-authored agents (name, instructions, tools, model) | ✅ |
 | `agents` · `departments` · `tools` | Built-in roster + org scaffolding | ✅ |
+| `capabilities` · `agent_capabilities` | Company Registry capability catalog + agent assignments (keyed by canonical agent id, no FK) | ✅ V2 F0.1 |
 | `agent_runs` · `agent_messages` | Per-agent run + chat history (model, tokens, cost) | ✅ |
 | `agent_flows` | Legacy single canvas — kept working during transition | ✅ compat |
 | `flow_workflows` | Workflow identity + metadata + **draft graph** + current-version pointer | ✅ Phase A |

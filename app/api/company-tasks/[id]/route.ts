@@ -1,0 +1,31 @@
+/**
+ * One company task (Architecture V2 · F0.2).
+ *   GET   /api/company-tasks/:id   — the task + its prerequisites + satisfied flag
+ *   PATCH /api/company-tasks/:id   — update fields / guarded status transition
+ *
+ * `workflowId`/`runId` are references only — F0.2 never runs anything.
+ */
+import { NextResponse } from 'next/server';
+import { getDb } from '@/lib/data';
+import { getCompanyTask, getTaskDependencies, updateCompanyTask, companyErrorInfo } from '@/lib/company/service';
+
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
+export function GET(_req: Request, { params }: { params: { id: string } }) {
+  const db = getDb();
+  const task = getCompanyTask(db, params.id);
+  if (!task) return NextResponse.json({ error: 'task not found' }, { status: 404 });
+  const { dependsOn, satisfied } = getTaskDependencies(db, params.id);
+  return NextResponse.json({ task, dependsOn, prerequisitesSatisfied: satisfied });
+}
+
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    return NextResponse.json({ task: updateCompanyTask(getDb(), params.id, body) });
+  } catch (err) {
+    const { status, error } = companyErrorInfo(err);
+    return NextResponse.json({ error }, { status });
+  }
+}

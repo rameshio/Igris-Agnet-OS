@@ -23,10 +23,17 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
   const db = getDb();
   const wf = db.flowWorkflows.get(params.id);
   if (!wf) return NextResponse.json({ error: 'workflow not found' }, { status: 404 });
+  // Read-only draft validation, using the SAME rules publishing enforces, so the
+  // Commander's publish preview (U3) can show an authoritative validation state
+  // and disable Confirm when the draft is invalid. Purely additive; the editor
+  // ignores this field.
+  const agentIds = new Set(allRuntimeAgents(db).map((a) => a.id));
+  const draftValidation = validateWorkflowGraph(wf.draftGraph, { agentIds, requireNonEmpty: true });
   return NextResponse.json({
     workflow: { id: wf.id, name: wf.name, description: wf.description, currentVersion: wf.currentVersion, updatedAt: wf.updatedAt },
     graph: wf.draftGraph,
     versions: db.flowVersions.forWorkflow(wf.id),
+    draftValidation,
   });
 }
 
