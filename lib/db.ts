@@ -10,6 +10,7 @@ import {
   type CapabilitySource,
 } from '@/lib/agents/capabilities';
 import type { Mission, CompanyTask, CompanyTaskDependency } from '@/lib/company/model';
+import type { CompanyArtifact, CompanyEvent, CompanyEventType } from '@/lib/company/manager/model';
 import type {
   FlowRun,
   FlowNodeRun,
@@ -176,6 +177,8 @@ CREATE TABLE IF NOT EXISTS company_tasks (
   run_id TEXT,
   priority TEXT NOT NULL DEFAULT 'normal',
   required_capabilities TEXT NOT NULL DEFAULT '[]',
+  execution_kind TEXT,
+  execution_ref_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   started_at TEXT,
@@ -192,6 +195,39 @@ CREATE TABLE IF NOT EXISTS company_task_dependencies (
   PRIMARY KEY (task_id, depends_on_task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_company_task_deps_dependson ON company_task_dependencies (depends_on_task_id);
+-- Executive Manager (Architecture V2 · F1). company_artifacts = structured work
+-- products (traceable to mission/task/execution). company_events = an APPEND-ONLY
+-- operational ledger for real delegation — NOT canonical state (Mission/Task/
+-- Artifact/Run/Agent remain the source of truth). Additive; no FK.
+CREATE TABLE IF NOT EXISTS company_artifacts (
+  id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  task_id TEXT,
+  produced_by_agent_id TEXT,
+  workflow_run_id TEXT,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT,
+  content_json TEXT,
+  content_type TEXT,
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_company_artifacts_mission ON company_artifacts (mission_id);
+CREATE INDEX IF NOT EXISTS idx_company_artifacts_task ON company_artifacts (task_id);
+CREATE TABLE IF NOT EXISTS company_events (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  mission_id TEXT,
+  task_id TEXT,
+  agent_id TEXT,
+  workflow_id TEXT,
+  artifact_id TEXT,
+  summary TEXT NOT NULL,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_company_events_mission ON company_events (mission_id, created_at);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -534,6 +570,14 @@ function migrateAgentsTable(db: InstanceType<typeof Database>): void {
   if (!columns.has('instance')) db.exec("ALTER TABLE agents ADD COLUMN instance TEXT NOT NULL DEFAULT 'builtin'");
 }
 
+// company_tasks (F0.2) gained F1 execution-reference columns. Additive + idempotent.
+function migrateCompanyTasksTable(db: InstanceType<typeof Database>): void {
+  const columns = new Set((db.pragma('table_info(company_tasks)') as { name: string }[]).map((c) => c.name));
+  if (columns.size === 0) return; // table not created yet (fresh DBs get the columns via DDL)
+  if (!columns.has('execution_kind')) db.exec('ALTER TABLE company_tasks ADD COLUMN execution_kind TEXT');
+  if (!columns.has('execution_ref_id')) db.exec('ALTER TABLE company_tasks ADD COLUMN execution_ref_id TEXT');
+}
+
 /** Databases created before the funnel-space build lack these columns. */
 function migrateFunnelContactsTable(db: InstanceType<typeof Database>): void {
   const columns = new Set(
@@ -630,6 +674,7 @@ export function openDb(path: string) {
   migrateFunnelContactsTable(db);
   migrateSkillsTable(db);
   migrateCustomAgentsTable(db);
+  migrateCompanyTasksTable(db);
   migrateAgentRunsTable(db);
   migrateFlowWorkflowsTable(db);
 
@@ -826,7 +871,8 @@ export function openDb(path: string) {
   type CompanyTaskRow = {
     id: string; mission_id: string; parent_task_id: string | null; title: string; objective: string; status: string;
     assigned_agent_id: string | null; workflow_id: string | null; run_id: string | null; priority: string;
-    required_capabilities: string; created_at: string; updated_at: string; started_at: string | null; completed_at: string | null;
+    required_capabilities: string; execution_kind: string | null; execution_ref_id: string | null;
+    created_at: string; updated_at: string; started_at: string | null; completed_at: string | null;
   };
   const rowToCompanyTask = (r: CompanyTaskRow): CompanyTask => ({
     id: r.id,
@@ -838,6 +884,8 @@ export function openDb(path: string) {
     assignedAgentId: r.assigned_agent_id ?? undefined,
     workflowId: r.workflow_id ?? undefined,
     runId: r.run_id ?? undefined,
+    executionKind: (r.execution_kind as CompanyTask['executionKind']) ?? undefined,
+    executionRefId: r.execution_ref_id ?? undefined,
     priority: r.priority as CompanyTask['priority'],
     requiredCapabilities: parseJson<string[]>(r.required_capabilities, []),
     createdAt: r.created_at,
@@ -856,13 +904,96 @@ export function openDb(path: string) {
     insert(t: CompanyTask): void {
       db.prepare(
         `INSERT OR REPLACE INTO company_tasks
-          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, priority, required_capabilities, created_at, updated_at, started_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, execution_kind, execution_ref_id, priority, required_capabilities, created_at, updated_at, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         t.id, t.missionId, t.parentTaskId ?? null, t.title, t.objective ?? '', t.status, t.assignedAgentId ?? null,
-        t.workflowId ?? null, t.runId ?? null, t.priority, JSON.stringify(t.requiredCapabilities), t.createdAt, t.updatedAt,
-        t.startedAt ?? null, t.completedAt ?? null,
+        t.workflowId ?? null, t.runId ?? null, t.executionKind ?? null, t.executionRefId ?? null, t.priority,
+        JSON.stringify(t.requiredCapabilities), t.createdAt, t.updatedAt, t.startedAt ?? null, t.completedAt ?? null,
       );
+    },
+  };
+
+  // ── F1 Executive Manager: artifacts + event ledger ──
+  type CompanyArtifactRow = {
+    id: string; mission_id: string; task_id: string | null; produced_by_agent_id: string | null; workflow_run_id: string | null;
+    type: string; title: string; summary: string | null; content_json: string | null; content_type: string | null;
+    source_refs: string; created_at: string;
+  };
+  const rowToArtifact = (r: CompanyArtifactRow): CompanyArtifact => ({
+    id: r.id,
+    missionId: r.mission_id,
+    taskId: r.task_id ?? undefined,
+    producedByAgentId: r.produced_by_agent_id ?? undefined,
+    workflowRunId: r.workflow_run_id ?? undefined,
+    type: r.type,
+    title: r.title,
+    summary: r.summary ?? undefined,
+    content: r.content_json === null ? undefined : parseJson<unknown>(r.content_json, null),
+    contentType: r.content_type ?? undefined,
+    sourceRefs: parseJson<string[]>(r.source_refs, []),
+    createdAt: r.created_at,
+  });
+  const companyArtifacts = {
+    get(id: string): CompanyArtifact | null {
+      const r = db.prepare('SELECT * FROM company_artifacts WHERE id = ?').get(id) as CompanyArtifactRow | undefined;
+      return r ? rowToArtifact(r) : null;
+    },
+    forMission(missionId: string): CompanyArtifact[] {
+      return db.prepare('SELECT * FROM company_artifacts WHERE mission_id = ? ORDER BY created_at, id').all(missionId).map((r) => rowToArtifact(r as CompanyArtifactRow));
+    },
+    forTask(taskId: string): CompanyArtifact[] {
+      return db.prepare('SELECT * FROM company_artifacts WHERE task_id = ? ORDER BY created_at, id').all(taskId).map((r) => rowToArtifact(r as CompanyArtifactRow));
+    },
+    insert(a: CompanyArtifact): void {
+      db.prepare(
+        `INSERT OR REPLACE INTO company_artifacts (id, mission_id, task_id, produced_by_agent_id, workflow_run_id, type, title, summary, content_json, content_type, source_refs, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        a.id, a.missionId, a.taskId ?? null, a.producedByAgentId ?? null, a.workflowRunId ?? null, a.type, a.title,
+        a.summary ?? null, a.content === undefined ? null : JSON.stringify(a.content), a.contentType ?? null,
+        JSON.stringify(a.sourceRefs ?? []), a.createdAt,
+      );
+    },
+  };
+
+  type CompanyEventRow = {
+    id: string; type: string; mission_id: string | null; task_id: string | null; agent_id: string | null;
+    workflow_id: string | null; artifact_id: string | null; summary: string; metadata_json: string | null; created_at: string;
+  };
+  const rowToEvent = (r: CompanyEventRow): CompanyEvent => ({
+    id: r.id,
+    type: r.type as CompanyEventType,
+    missionId: r.mission_id ?? undefined,
+    taskId: r.task_id ?? undefined,
+    agentId: r.agent_id ?? undefined,
+    workflowId: r.workflow_id ?? undefined,
+    artifactId: r.artifact_id ?? undefined,
+    summary: r.summary,
+    metadata: r.metadata_json === null ? undefined : parseJson<CompanyEvent['metadata']>(r.metadata_json, undefined),
+    createdAt: r.created_at,
+  });
+  const companyEvents = {
+    /** Append-only insert. */
+    append(e: CompanyEvent): void {
+      db.prepare(
+        `INSERT INTO company_events (id, type, mission_id, task_id, agent_id, workflow_id, artifact_id, summary, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        e.id, e.type, e.missionId ?? null, e.taskId ?? null, e.agentId ?? null, e.workflowId ?? null, e.artifactId ?? null,
+        e.summary, e.metadata === undefined ? null : JSON.stringify(e.metadata), e.createdAt,
+      );
+    },
+    forMission(missionId: string, limit = 200): CompanyEvent[] {
+      return db.prepare('SELECT * FROM company_events WHERE mission_id = ? ORDER BY created_at DESC, id DESC LIMIT ?').all(missionId, limit).map((r) => rowToEvent(r as CompanyEventRow));
+    },
+    forTask(taskId: string, limit = 100): CompanyEvent[] {
+      return db.prepare('SELECT * FROM company_events WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?').all(taskId, limit).map((r) => rowToEvent(r as CompanyEventRow));
+    },
+    /** Count events of a type for a task — idempotency guard for critical events. */
+    countForTask(taskId: string, type: string): number {
+      const row = db.prepare('SELECT COUNT(*) AS n FROM company_events WHERE task_id = ? AND type = ?').get(taskId, type) as { n: number };
+      return row.n;
     },
   };
 
@@ -2293,6 +2424,8 @@ export function openDb(path: string) {
     companyMissions,
     companyTasks,
     companyTaskDeps,
+    companyArtifacts,
+    companyEvents,
     agentFlows,
     flowWorkflows,
     flowVersions,

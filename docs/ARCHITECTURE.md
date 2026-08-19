@@ -220,6 +220,67 @@ unit). DISTINCT from the existing lightweight `agent_tasks` kanban (untouched).
   assignment/delegation, Agent Factory (F2), G-Brain F3, pagination, soft-delete.
   See `docs/CHANGE-LOG.md` V2-F0.2 record.
 
+### 6d. Executive Manager / Delegation Engine (Architecture V2 · F1) ✅
+
+The company becomes operable: an **Executive Manager** plans a Mission, decomposes
+it into Company Tasks, matches capabilities (F0.1), and DELEGATES to an existing
+agent OR an existing published workflow — recording structured Artifacts, an
+append-only event ledger, and a report. It **evolves the existing systems**; it is
+NOT a parallel engine.
+
+- **Three roles stay separate:** `Commander` = the OWNER's operating surface (U2/U3);
+  `Executive Manager` = the AI manager agent (the evolved **Conductor**, tagged
+  `role: 'executive_manager'` in the runtime registry — no duplicate id; still the
+  chat/ASK operator brain); `Workflow Engine` = the deterministic SOP executor
+  (Phase A–E, authoritative for runs + Human Approval).
+- **Manager service** (`lib/company/manager/*`): `model.ts` (pure — the CLOSED
+  action allow-list, plan/artifact/event schemas + SAFE projections, deterministic
+  dispatch/selection/completion policy), `planning.ts`, `delegation.ts`,
+  `service.ts`, `artifacts.ts`, `events.ts`. UI/API are thin.
+- **Planning ≠ execution.** `planMission` asks the LLM for a plan but the SERVER
+  owns safety: the plan is Zod-validated; **task ids are server-generated** (never
+  trusted from the LLM); capability ids pass F0.1 validation; dependencies pass F0.2
+  validation; a bad plan fails safely; apply is **idempotent by title** (re-plan
+  never duplicates). Planning starts no execution.
+- **Capability-based delegation (deterministic, exact-id).** For each task the
+  policy is: valid **published** workflow → workflow; else an assigned/selected
+  eligible agent → agent; else **CAPABILITY_GAP** (task stays queued, structured gap
+  reported — **F1 NEVER creates an agent; that is F2**). Agent selection uses the
+  F0.1 rank as PRIMARY and real **U5 presence** only to prefer a non-busy agent
+  (never fabricated). Manual assignment stays F0.2 compat-checked.
+- **Dispatch through existing infra** (no parallel engine): agent path →
+  `createRuntime(...).run(id)` (an `agent_runs` row, synchronous); workflow path →
+  the existing `startRun` on the **immutable published version only** (fire-and-
+  forget). Completion of workflow tasks is synced by `reconcileTask` from the flow
+  run. **Idempotent**: a running/terminal task is never re-dispatched; one artifact
+  per task execution (guarded via the ledger). **Durable**: task state + execution
+  refs live in the DB and survive restart.
+- **Execution reference:** F1 adds `executionKind` (`agent`|`workflow`) +
+  `executionRefId` on `company_tasks` — it NEVER overloads the workflow-run `runId`
+  with an agent-run id.
+- **Artifact** (`company_artifacts`): the first-class work product, traceable to
+  mission/task/execution, with a SAFE metadata projection (report/events never
+  expose `content`). **No G-Brain ingestion** — no automatic durable memory (F3).
+- **Event ledger** (`company_events`): APPEND-ONLY, emitted only AFTER canonical
+  state persists, best-effort (a ledger failure never corrupts state), bounded/safe
+  metadata (no prompts/secrets/tool args). It is NOT canonical state.
+- **Bounded orchestration:** `managerStep` runs ONE tick (reconcile → promote
+  satisfied dependencies → dispatch ≤ `maxSteps` (default 3) → derive completion).
+  **No autonomous/infinite loop.** Mission completes deterministically only when
+  every non-cancelled task is completed and none failed.
+- **Human Approval:** reused Phase E — a workflow run that pauses moves the task to
+  `waiting_approval` and emits `APPROVAL_REQUIRED`; the operator resolves it on
+  `/approvals`, the run resumes (Phase E), and a later `reconcileTask` completes the
+  task. **No `company_approvals`, no second approval authority.**
+- **APIs** (Zod, no generic "execute-anything"): `POST /api/missions/:id/plan`,
+  `POST /api/missions/:id/manager-step`, `POST /api/company-tasks/:id/dispatch`,
+  `GET /api/missions/:id/report[?synthesize]`, `GET /api/missions/:id/events`,
+  `GET /api/company-artifacts/:id`. **UI:** `/missions` (`MissionsBoard`) gains Plan /
+  Manager Step / per-task Dispatch + a deterministic report strip + the event list.
+- **Not built in F1** (deferred): F2 Agent Factory / new-agent creation, department-
+  manager hierarchy, G-Brain F3 (ingestion / radial / neural), semantic capability
+  matching, autonomous/unbounded loop. See `docs/CHANGE-LOG.md` V2-F1 record.
+
 ---
 
 ## 7. Model architecture

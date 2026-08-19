@@ -58,7 +58,11 @@ export type CompanyTask = {
   status: CompanyTaskStatus;
   assignedAgentId?: string;
   workflowId?: string; // an SOP this task is INTENDED to run via — F0.2 never runs it
-  runId?: string; // execution reference seam for F1 — never created here
+  runId?: string; // F0.2 workflow-run seam (kept); F1 dispatch also records it for workflow runs
+  // F1 canonical current-execution pointer — NEVER overloads runId (a flow-run id)
+  // with an agent-run id. `agent` → an agent_runs id; `workflow` → a flow_runs id.
+  executionKind?: 'agent' | 'workflow';
+  executionRefId?: string;
   priority: WorkPriority;
   requiredCapabilities: string[]; // F0.1 capability ids — metadata, never auto-assigns
   createdAt: string;

@@ -32,6 +32,15 @@ export function getAgentById(db: FounderDb, id: string): RuntimeAgent | undefine
   return allRuntimeAgents(db).find((a) => a.id === id);
 }
 
+/**
+ * The Executive Manager agent (Architecture V2 F1) — the evolved Conductor. It is
+ * the single `executive_manager` in the runtime registry (no duplicate id). The F1
+ * manager service orchestrates through THIS agent + the existing runtime.
+ */
+export function getExecutiveManager(db: FounderDb): RuntimeAgent | undefined {
+  return allRuntimeAgents(db).find((a) => a.role === 'executive_manager');
+}
+
 /** The capability DEFINITIONS an agent is assigned (joined to the catalog). */
 export function getCapabilitiesForAgent(db: FounderDb, agentId: string): Capability[] {
   return db.agentCapabilities

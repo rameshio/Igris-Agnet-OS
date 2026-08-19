@@ -116,7 +116,12 @@ export const realAgents: RuntimeAgent[] = [
   {
     id: 'conductor',
     name: 'Conductor',
-    description: 'Broadcast fan-out + instance host availability (OpenClaw gateway, Ollama, tmux) for future bindings.',
+    // Architecture V2 F1: the Conductor IS the Executive Manager — the single AI
+    // manager agent that plans/decomposes/delegates. It remains the operator brain
+    // for chat/ASK; the manager behavior lives in lib/company/manager/* and reuses
+    // this agent + the existing runtime. No second manager id is created.
+    role: 'executive_manager',
+    description: 'Executive Manager — plans missions, decomposes into tasks, delegates to specialist agents/workflows; also the operator brain for chat/ASK.',
     departmentId: 'dept-tech',
     async run() {
       const stack = await localStackStatus();

@@ -1,14 +1,17 @@
 'use client';
 
 /**
- * Company Missions board (Architecture V2 · F0.2). Compact admin surface over the
- * read-only + registry-mutation APIs — it never runs, delegates, or grants
- * authority. All writes go through the typed `/api/missions` + `/api/company-tasks`
- * endpoints (React never touches SQLite).
+ * Company Missions board (Architecture V2 · F0.2 + F1). Compact admin surface over
+ * the typed `/api/missions` + `/api/company-tasks` endpoints (React never touches
+ * SQLite). F1 adds the Executive Manager controls — Plan (decompose) and Manager
+ * Step (one bounded orchestration tick) — plus per-task Dispatch, a deterministic
+ * report strip (blockers / capability gaps / artifacts), and the event ledger.
+ * The board only REQUESTS these operations; the manager service enforces safety.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { Mission, CompanyTask, CompanyTaskStatus } from '@/lib/company/model';
 import { COMPANY_TASK_STATUSES } from '@/lib/company/model';
+import type { MissionReport, CompanyEvent } from '@/lib/company/manager/model';
 import type { AgentMatch } from '@/lib/agents/capabilities';
 import { Badge } from '@/components/terminal';
 
@@ -42,6 +45,9 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   const [newTask, setNewTask] = useState('');
   const [newTaskCaps, setNewTaskCaps] = useState('');
   const [eligibleFor, setEligibleFor] = useState<{ taskId: string; agents: AgentMatch[] } | null>(null);
+  const [report, setReport] = useState<MissionReport | null>(null);
+  const [events, setEvents] = useState<CompanyEvent[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const selected = missions.find((m) => m.id === selectedId) ?? null;
@@ -51,16 +57,27 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     if (r.data) setMissions(r.data.missions);
   }, []);
 
-  const loadTasks = useCallback(async (missionId: string) => {
-    const r = await api<{ tasks: CompanyTask[] }>(`/api/missions/${missionId}/tasks`);
-    setTasks(r.data?.tasks ?? []);
+  const loadDetail = useCallback(async (missionId: string) => {
+    const [t, rep, ev] = await Promise.all([
+      api<{ tasks: CompanyTask[] }>(`/api/missions/${missionId}/tasks`),
+      api<{ report: MissionReport }>(`/api/missions/${missionId}/report`),
+      api<{ events: CompanyEvent[] }>(`/api/missions/${missionId}/events`),
+    ]);
+    setTasks(t.data?.tasks ?? []);
+    setReport(rep.data?.report ?? null);
+    setEvents(ev.data?.events ?? []);
   }, []);
+  const loadTasks = loadDetail;
 
   useEffect(() => {
-    if (selectedId) void loadTasks(selectedId);
-    else setTasks([]);
+    if (selectedId) void loadDetail(selectedId);
+    else {
+      setTasks([]);
+      setReport(null);
+      setEvents([]);
+    }
     setEligibleFor(null);
-  }, [selectedId, loadTasks]);
+  }, [selectedId, loadDetail]);
 
   const guard = async (r: { ok: boolean; error?: string }) => {
     setError(r.ok ? null : r.error ?? 'error');
@@ -114,6 +131,26 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     if ((await guard(r)) && selectedId) await loadTasks(selectedId);
   };
 
+  // ── F1 Executive Manager operations (request only; the service enforces safety) ──
+  const runManager = async (path: string, key: string) => {
+    if (!selectedId) return;
+    setBusy(key);
+    const r = await api(`/api/missions/${selectedId}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setBusy(null);
+    if (await guard(r)) {
+      await loadDetail(selectedId);
+      await loadMissions();
+    }
+  };
+  const planMission = () => runManager('plan', 'plan');
+  const managerStep = () => runManager('manager-step', 'step');
+  const dispatch = async (taskId: string) => {
+    setBusy(taskId);
+    const r = await api(`/api/company-tasks/${taskId}/dispatch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setBusy(null);
+    if ((await guard(r)) && selectedId) await loadDetail(selectedId);
+  };
+
   const setMissionStatus = async (status: string) => {
     if (!selectedId) return;
     const r = await api(`/api/missions/${selectedId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
@@ -154,6 +191,27 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
               </select>
             </div>
 
+            {/* F1 Executive Manager controls + deterministic report strip */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-sm-t border border-os-border bg-os-surface px-3 py-2">
+              <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-os-accent">manager</span>
+              <button onClick={planMission} disabled={busy === 'plan'} className="rounded border border-os-border-strong px-2 py-1 font-mono text-[10px] uppercase text-os-muted hover:text-os-text disabled:opacity-50">{busy === 'plan' ? 'planning…' : 'Plan mission'}</button>
+              <button onClick={managerStep} disabled={busy === 'step'} className="rounded border border-os-accent/50 px-2 py-1 font-mono text-[10px] uppercase text-os-accent hover:bg-os-accent/10 disabled:opacity-50">{busy === 'step' ? 'stepping…' : 'Manager step'}</button>
+              {report && (
+                <span className="ml-auto flex flex-wrap items-center gap-2.5 font-mono text-[10px] text-os-dim">
+                  <span>{report.taskCounts.completed}/{report.taskCounts.total} done</span>
+                  {report.taskCounts.running > 0 && <span className="text-os-ok">{report.taskCounts.running} running</span>}
+                  {report.taskCounts.failed > 0 && <span className="text-os-err">{report.taskCounts.failed} failed</span>}
+                  {report.capabilityGaps.length > 0 && <span className="text-os-warn">{report.capabilityGaps.length} cap-gap</span>}
+                  <span>{report.artifacts.length} artifact{report.artifacts.length === 1 ? '' : 's'}</span>
+                </span>
+              )}
+            </div>
+            {report && report.blockers.length > 0 && (
+              <div className="mt-2 rounded-sm-t border border-os-warn/40 bg-os-warn/5 px-3 py-1.5 font-mono text-[10px] text-os-warn">
+                Blockers: {report.blockers.map((b) => `${b.title} (${b.reason.replace('_', ' ')})`).join(' · ')}
+              </div>
+            )}
+
             {/* New task */}
             <div className="mt-4 mb-3 flex flex-wrap gap-1.5">
               <input value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createTask()} placeholder="New task title…" className="min-w-[160px] flex-1 rounded border border-os-border bg-os-bg px-2 py-1.5 font-mono text-[11px] text-os-text placeholder:text-os-dim" />
@@ -172,6 +230,7 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         <Badge tone={TASK_TONE[t.status]}>{t.status.replace('_', ' ')}</Badge>
                         {t.assignedAgentId && <span className="font-mono text-[9.5px] text-os-dim">→ {t.assignedAgentId}</span>}
+                        {t.executionKind && <span className="font-mono text-[9px] uppercase text-os-dim">[{t.executionKind}]</span>}
                         {t.requiredCapabilities.map((c) => <span key={c} className="rounded-sm-t border border-os-border bg-os-surface2 px-[6px] py-0.5 font-mono text-[9px] text-os-muted">{c}</span>)}
                       </div>
                     </div>
@@ -181,6 +240,9 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                   </div>
 
                   <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button onClick={() => dispatch(t.id)} disabled={busy === t.id || ['running', 'completed', 'cancelled'].includes(t.status)} className="rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Manager to dispatch this task to an agent/workflow">
+                      {busy === t.id ? '…' : 'Dispatch'}
+                    </button>
                     <button onClick={() => showEligible(t.id)} className="rounded border border-os-border px-2 py-0.5 font-mono text-[9.5px] text-os-muted hover:text-os-text">
                       {eligibleFor?.taskId === t.id ? 'Hide eligible' : 'Eligible agents'}
                     </button>
@@ -211,6 +273,21 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                 </div>
               ))}
             </div>
+
+            {/* F1 event ledger (append-only; safe metadata only) */}
+            {events.length > 0 && (
+              <div className="mt-5">
+                <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.26em] text-os-dim">Events · {events.length}</div>
+                <ul className="flex flex-col gap-1">
+                  {events.slice(0, 12).map((e) => (
+                    <li key={e.id} className="flex items-baseline gap-2 rounded-sm-t border border-os-border bg-os-surface px-2.5 py-1 font-mono text-[9.5px]">
+                      <span className="shrink-0 uppercase tracking-wide text-os-accent">{e.type}</span>
+                      <span className="min-w-0 flex-1 truncate text-os-muted">{e.summary}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -49,6 +49,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'metrics', load: () => import('@/app/api/metrics/route'), url: 'http://localhost/api/metrics' },
   { route: 'missions', load: () => import('@/app/api/missions/route'), url: 'http://localhost/api/missions' },
   { route: 'company-tasks/[id]/dependencies', load: () => import('@/app/api/company-tasks/[id]/dependencies/route'), url: 'http://localhost/api/company-tasks/smoke/dependencies', params: { id: 'smoke' } },
+  { route: 'missions/[id]/events', load: () => import('@/app/api/missions/[id]/events/route'), url: 'http://localhost/api/missions/smoke/events', params: { id: 'smoke' } },
   { route: 'roadmap', load: () => import('@/app/api/roadmap/route'), url: 'http://localhost/api/roadmap' },
   { route: 'settings/brain', load: () => import('@/app/api/settings/brain/route'), url: 'http://localhost/api/settings/brain' },
   { route: 'social', load: () => import('@/app/api/social/route'), url: 'http://localhost/api/social' },
@@ -97,7 +98,8 @@ describe('platform smoke — every GET API route answers 200 with JSON', () => {
     // flow-approvals/[id] GET 404s without a real approval id — covered by tests/flow-approvals.test.ts.
     // agents/[id]/capabilities GET 404s without a real agent id — covered by tests/capabilities-registry.test.ts.
     // company mission/task GETs 404 without real ids — covered by tests/company-service.test.ts.
-    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime', 'agents/[id]/capabilities', 'missions/[id]', 'missions/[id]/tasks', 'company-tasks/[id]', 'company-tasks/[id]/eligible-agents']);
+    // missions/[id]/report + company-artifacts/[id] GET 404 without real ids — covered by tests/company-manager*.test.ts.
+    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime', 'agents/[id]/capabilities', 'missions/[id]', 'missions/[id]/tasks', 'company-tasks/[id]', 'company-tasks/[id]/eligible-agents', 'missions/[id]/report', 'company-artifacts/[id]']);
     const discovered = discoverGetRoutes(path.join(process.cwd(), 'app', 'api')).filter((r) => !IGNORE.has(r)).sort();
     const covered = ROUTES.map((r) => r.route).sort();
     expect(covered).toEqual(discovered);

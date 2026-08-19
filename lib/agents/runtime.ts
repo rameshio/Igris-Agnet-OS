@@ -20,6 +20,12 @@ export type RuntimeAgent = {
   description: string;
   departmentId: string;
   /**
+   * Organizational role in the company (Architecture V2). `executive_manager` marks
+   * the single planning/delegation manager (the evolved Conductor); absent on the
+   * specialist workforce. Metadata only — it grants no authority.
+   */
+  role?: 'executive_manager';
+  /**
    * A client-authored system prompt. Present on data-driven custom agents
    * (lib/agents/custom.ts); it defines the agent's behavior for both run() and
    * chat instead of the generic name+description prompt built for the built-in
