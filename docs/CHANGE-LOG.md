@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-F2**
+Phase: Architecture V2 · F2 (Agent Factory)
+Summary: Controlled, human-gated dynamic agent creation that fills the F1 `CAPABILITY_GAP`. When no existing agent or published workflow can satisfy a task, the operator proposes an agent; an LLM proposes a spec, the server validates it against a factory policy, and the agent is CREATED only on human approval (promotion). Reuses `createCustomAgent` under a policy wrapper — no forked creation, no autonomous loop.
+Reason: F1 deliberately stops at a structured capability gap ("F1 never creates an agent — that is F2"). F2 closes that loop while keeping creation policy-gated, human-approved, mission-bound/temporary, and non-spawning.
+Files added: `lib/company/factory/model.ts` (pure — `FactoryPolicy` + bounded override, `AgentSpecSchema`, `validateSpecAgainstPolicy`, safe projection), `lib/company/factory/service.ts` (`proposeAgentForGap` / `promoteProposal` / `rejectProposal` / `retireTemporaryAgents`, injectable proposer); `app/api/company-tasks/[id]/propose-agent/route.ts`; `app/api/agent-proposals/[id]/{approve,reject}/route.ts`; `app/api/missions/[id]/proposals/route.ts`; `tests/company-factory.test.ts`, `tests/company-factory-service.test.ts`.
+Files modified: `lib/company/manager/model.ts` (+4 additive event types AGENT_PROPOSED/PROMOTED/REJECTED/RETIRED), `lib/company/manager/service.ts` (retire temporary agents on mission completion), `lib/db.ts` (`company_agent_proposals` table + `companyAgentProposals` repo with idempotent `resolve`), `components/MissionsBoard.tsx` (Propose agent + Proposals review strip), `tests/smoke-api.test.ts` (proposals route), docs.
+Database: additive `company_agent_proposals` table + 2 indexes (`CREATE TABLE IF NOT EXISTS`). No existing table/column changed; `custom_agents`/`CustomAgent` schema untouched (factory metadata lives on the proposal row).
+API: `POST /api/company-tasks/:id/propose-agent`, `POST /api/agent-proposals/:id/approve`, `POST /api/agent-proposals/:id/reject`, `GET /api/missions/:id/proposals`. No generic execute-anything endpoint.
+Behavior: `/missions` shows a **Propose agent** button when a task has no eligible agent, and a **Proposals** strip to Approve/Reject. Approval creates an enabled custom agent assigned exactly the gap capabilities → the F1 resolver matches → the next Manager Step dispatches the task. A completed mission retires its temporary factory agents.
+Tests added: 14 pure-model + 8 service (propose→pending with no agent; refuses a non-gap; policy violation ⇒ 400 fail-safe; promote creates + assigns + resolver matches + dispatch; idempotent promote/reject; retire disables + unassigns; full end-to-end gap→propose→approve→managerStep→complete→retire).
+Tests run: `tsc --noEmit` (clean); vitest factory + smoke-api suites; full suite.
+Results: pass (typecheck clean; factory 22/22; smoke net green).
+Known limits: exact-id capability matching only (inherits F0.1); operator-triggered proposal only (no auto-propose); budget stored + surfaced but not hard-metered at runtime (agent_runs `cost_usd` is the seam); proposed model must be allow-listed; no per-department policies. No department managers, no semantic matching, no G-Brain F3, no autonomous loop.
+Rollback: code rollback removes the routes/service/model/UI; the additive `company_agent_proposals` table is inert if unused (safe to leave). No data migration to reverse.
+
+---
+
 Change ID: **V2-F1**
 Phase: Architecture V2 · F1 (Executive Manager / Delegation Engine)
 Summary: An Executive Manager (the evolved Conductor) plans a Mission, decomposes it into Company Tasks, capability-matches, and delegates to an existing agent OR an existing published workflow — with Artifacts, an append-only event ledger, and a report. Bounded, durable, deterministic, human-triggered.

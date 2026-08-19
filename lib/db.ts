@@ -11,6 +11,7 @@ import {
 } from '@/lib/agents/capabilities';
 import type { Mission, CompanyTask, CompanyTaskDependency } from '@/lib/company/model';
 import type { CompanyArtifact, CompanyEvent, CompanyEventType } from '@/lib/company/manager/model';
+import { DEFAULT_FACTORY_POLICY, type AgentProposal, type AgentSpec, type FactoryPolicy, type ProposalStatus } from '@/lib/company/factory/model';
 import type {
   FlowRun,
   FlowNodeRun,
@@ -228,6 +229,30 @@ CREATE TABLE IF NOT EXISTS company_events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_company_events_mission ON company_events (mission_id, created_at);
+-- Agent Factory (Architecture V2 · F2). A human-gated PROPOSAL to create a new agent
+-- that fills a CAPABILITY_GAP. The row IS the pending artifact — no agent exists until
+-- a human approves (promotion). Additive; cross-subsystem refs (mission/task/agent) are
+-- validated in the service layer, not by FK, matching the repo canonical-id strategy.
+CREATE TABLE IF NOT EXISTS company_agent_proposals (
+  id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  task_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  spec_json TEXT NOT NULL,
+  policy_json TEXT NOT NULL,
+  required_capabilities TEXT NOT NULL DEFAULT '[]',
+  rationale TEXT,
+  temporary INTEGER NOT NULL DEFAULT 1,
+  max_depth INTEGER NOT NULL DEFAULT 1,
+  budget_usd REAL,
+  agent_id TEXT,
+  decided_by TEXT,
+  decided_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_company_agent_proposals_mission ON company_agent_proposals (mission_id);
+CREATE INDEX IF NOT EXISTS idx_company_agent_proposals_status ON company_agent_proposals (status);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -1020,6 +1045,76 @@ export function openDb(path: string) {
     },
     remove(taskId: string, dependsOnTaskId: string): void {
       db.prepare('DELETE FROM company_task_dependencies WHERE task_id = ? AND depends_on_task_id = ?').run(taskId, dependsOnTaskId);
+    },
+  };
+
+  // ── Agent Factory (F2). Persistence only — validation/orchestration live in
+  //    lib/company/factory/service.ts. The proposal row is the pending, human-gated
+  //    artifact; `resolve` mirrors flowApprovals.resolve (idempotent conditional
+  //    transition of a `pending` row) so a double-approve promotes exactly once.
+  type ProposalRow = {
+    id: string; mission_id: string; task_id: string | null; status: string;
+    spec_json: string; policy_json: string; required_capabilities: string; rationale: string | null;
+    temporary: number; max_depth: number; budget_usd: number | null; agent_id: string | null;
+    decided_by: string | null; decided_at: string | null; created_at: string; updated_at: string;
+  };
+  const rowToProposal = (r: ProposalRow): AgentProposal => ({
+    id: r.id,
+    missionId: r.mission_id,
+    taskId: r.task_id ?? undefined,
+    status: r.status as ProposalStatus,
+    spec: parseJson<AgentSpec>(r.spec_json, {} as AgentSpec),
+    policy: parseJson<FactoryPolicy>(r.policy_json, DEFAULT_FACTORY_POLICY),
+    requiredCapabilities: parseJson<string[]>(r.required_capabilities, []),
+    rationale: r.rationale ?? undefined,
+    temporary: r.temporary === 1,
+    maxDepth: r.max_depth,
+    budgetUsd: r.budget_usd,
+    agentId: r.agent_id ?? undefined,
+    decidedBy: r.decided_by ?? undefined,
+    decidedAt: r.decided_at ?? undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  const companyAgentProposals = {
+    all(): AgentProposal[] {
+      return db.prepare('SELECT * FROM company_agent_proposals ORDER BY created_at DESC, id DESC').all().map((r) => rowToProposal(r as ProposalRow));
+    },
+    forMission(missionId: string): AgentProposal[] {
+      return db.prepare('SELECT * FROM company_agent_proposals WHERE mission_id = ? ORDER BY created_at DESC, id DESC').all(missionId).map((r) => rowToProposal(r as ProposalRow));
+    },
+    get(id: string): AgentProposal | null {
+      const r = db.prepare('SELECT * FROM company_agent_proposals WHERE id = ?').get(id) as ProposalRow | undefined;
+      return r ? rowToProposal(r) : null;
+    },
+    insert(p: AgentProposal): void {
+      db.prepare(
+        `INSERT OR REPLACE INTO company_agent_proposals
+           (id, mission_id, task_id, status, spec_json, policy_json, required_capabilities, rationale,
+            temporary, max_depth, budget_usd, agent_id, decided_by, decided_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        p.id, p.missionId, p.taskId ?? null, p.status, JSON.stringify(p.spec), JSON.stringify(p.policy),
+        JSON.stringify(p.requiredCapabilities), p.rationale ?? null, p.temporary ? 1 : 0, p.maxDepth,
+        p.budgetUsd ?? null, p.agentId ?? null, p.decidedBy ?? null, p.decidedAt ?? null, p.createdAt, p.updatedAt,
+      );
+    },
+    /**
+     * Conditionally resolve a PENDING proposal. Returns the row only when THIS call
+     * performed the transition (`changes === 1`); a second concurrent approve/reject
+     * sees `changes === 0` and gets `null` (idempotent — one decision wins).
+     */
+    resolve(id: string, status: 'approved' | 'rejected', decidedBy: string | null): AgentProposal | null {
+      const nowIso = new Date().toISOString();
+      const res = db
+        .prepare("UPDATE company_agent_proposals SET status = ?, decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'")
+        .run(status, decidedBy, nowIso, nowIso, id);
+      if (res.changes !== 1) return null;
+      return this.get(id);
+    },
+    /** Link the created agent onto an already-approved proposal (promotion step 2). */
+    setAgent(id: string, agentId: string): void {
+      db.prepare('UPDATE company_agent_proposals SET agent_id = ?, updated_at = ? WHERE id = ?').run(agentId, new Date().toISOString(), id);
     },
   };
 
@@ -2426,6 +2521,7 @@ export function openDb(path: string) {
     companyTaskDeps,
     companyArtifacts,
     companyEvents,
+    companyAgentProposals,
     agentFlows,
     flowWorkflows,
     flowVersions,

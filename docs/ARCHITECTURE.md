@@ -283,6 +283,53 @@ NOT a parallel engine.
 
 ---
 
+### 6e. Agent Factory (Architecture V2 · F2) ✅
+
+F1 stops at a `CAPABILITY_GAP`; **F2 closes the loop** with CONTROLLED, HUMAN-GATED
+dynamic agent creation. When no existing agent (and no published workflow) can satisfy
+a task, the operator proposes an agent to fill the gap — but the agent is CREATED only
+on human approval. It **evolves** creation (`createCustomAgent` under a policy wrapper),
+never forks it, and introduces no autonomous behavior.
+
+- **Four discrete, operator-driven steps** (`lib/company/factory/service.ts`):
+  `proposeAgentForGap` → `promoteProposal` (approve) → `rejectProposal` → `retireTemporaryAgents`.
+  The pure model (`lib/company/factory/model.ts`) holds the policy, the spec schema,
+  the fail-safe validator, and the safe projection — unit-tested without DB/LLM.
+- **Proposal-first / create-on-approve.** The pending artifact is a
+  `company_agent_proposals` row holding the validated spec + policy snapshot + gap ref.
+  `createCustomAgent` runs ONLY at promotion, so "never silent" is airtight and there
+  are no disabled orphan agents on `/agents`.
+- **Proposing ≠ creating; the SERVER owns policy.** An (injectable) LLM proposes a spec,
+  but the server validates it against a `FactoryPolicy` and **fails safe** (400, nothing
+  persisted) on any violation: tools must be on the connector-backed allow-list and
+  bounded; the model allow-listed (or '' default); instructions bounded; depth ≤
+  `maxDepth`; `canSpawn=false` (a factory agent can never run the factory). The grant is
+  EXACTLY the task's gap capabilities — never the LLM's list.
+- **Human-gated promotion reuses the Phase-E PATTERN, not the table.** Promotion/rejection
+  are idempotent conditional transitions of a `pending` proposal (`WHERE status='pending'`),
+  mirroring `resolveApproval` — a double-approve promotes exactly once — but promotion has
+  no run to resume, so it does NOT touch `flow_approvals` and adds no second approval
+  authority. On approval: upsert the gap capability defs → `createCustomAgent` (enabled,
+  under the stored policy) → assign the gap capabilities → the **F1 resolver now matches**,
+  so the next `managerStep` dispatches the task.
+- **Capabilities gate eligibility, not `enabled`.** A pending proposal assigns NO
+  capabilities (the resolver can't pick it); promotion assigns them. Retirement removes
+  them again.
+- **Temporary + mission-bound.** Factory agents are marked temporary; `retireTemporaryAgents`
+  (called from `managerStep` on mission completion, and on any terminal mission) disables
+  the agent + removes its capabilities — reversible, not deleted. Factory metadata lives on
+  the proposal row; `custom_agents`/`CustomAgent` schema is unchanged.
+- **APIs** (Zod, no generic executor): `POST /api/company-tasks/:id/propose-agent`,
+  `POST /api/agent-proposals/:id/approve`, `POST /api/agent-proposals/:id/reject`,
+  `GET /api/missions/:id/proposals`. **UI:** `/missions` gains a per-gap **Propose agent**
+  button + a **Proposals** review strip (Approve/Reject).
+- **Not built in F2** (deferred): auto-propose / autonomous loop, department-manager
+  hierarchy, semantic capability matching, hard runtime budget metering (budget is stored +
+  surfaced only; agent_runs `cost_usd` is the seam), per-department policies, G-Brain F3.
+  See `docs/CHANGE-LOG.md` V2-F2 record.
+
+---
+
 ## 7. Model architecture
 
 Agents are never bound to one provider. An agent carries a **strategy**; a router resolves it
@@ -794,6 +841,9 @@ Activity stream — a dedicated agent-centric projection (cleaner than contortin
 | `model_provider_connections` | App-wide provider status/enabled/base-URL/last-check — **never the secret** | ✅ Phase B |
 | `flow_runs` · `flow_node_runs` | Run + per-node execution state, tokens, duration, errors | ✅ Phase C |
 | `flow_approvals` | Human-approval decisions bound to a paused run/node | ○ Phase E |
+| `company_missions` · `company_tasks` · `company_task_dependencies` | Canonical company-work layer (distinct from `agent_tasks`) | ✅ V2 F0.2 |
+| `company_artifacts` · `company_events` | First-class work products + append-only delegation ledger | ✅ V2 F1 |
+| `company_agent_proposals` | Human-gated Agent Factory proposals (spec + policy snapshot; agent created only on approval) | ✅ V2 F2 |
 
 (Plus the many operational/business tables: metrics, funnel, social, roadmap, skills, people, …)
 

@@ -1,17 +1,20 @@
 'use client';
 
 /**
- * Company Missions board (Architecture V2 · F0.2 + F1). Compact admin surface over
+ * Company Missions board (Architecture V2 · F0.2 + F1 + F2). Compact admin surface over
  * the typed `/api/missions` + `/api/company-tasks` endpoints (React never touches
  * SQLite). F1 adds the Executive Manager controls — Plan (decompose) and Manager
  * Step (one bounded orchestration tick) — plus per-task Dispatch, a deterministic
- * report strip (blockers / capability gaps / artifacts), and the event ledger.
- * The board only REQUESTS these operations; the manager service enforces safety.
+ * report strip (blockers / capability gaps / artifacts), and the event ledger. F2 adds
+ * the Agent Factory: when a task has no eligible agent, the operator can Propose an
+ * agent, then Approve/Reject it — the agent is CREATED only on approval (human-gated).
+ * The board only REQUESTS these operations; the services enforce safety.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { Mission, CompanyTask, CompanyTaskStatus } from '@/lib/company/model';
 import { COMPANY_TASK_STATUSES } from '@/lib/company/model';
 import type { MissionReport, CompanyEvent } from '@/lib/company/manager/model';
+import type { AgentProposal } from '@/lib/company/factory/model';
 import type { AgentMatch } from '@/lib/agents/capabilities';
 import { Badge } from '@/components/terminal';
 
@@ -47,6 +50,7 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   const [eligibleFor, setEligibleFor] = useState<{ taskId: string; agents: AgentMatch[] } | null>(null);
   const [report, setReport] = useState<MissionReport | null>(null);
   const [events, setEvents] = useState<CompanyEvent[]>([]);
+  const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,14 +62,16 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   }, []);
 
   const loadDetail = useCallback(async (missionId: string) => {
-    const [t, rep, ev] = await Promise.all([
+    const [t, rep, ev, pr] = await Promise.all([
       api<{ tasks: CompanyTask[] }>(`/api/missions/${missionId}/tasks`),
       api<{ report: MissionReport }>(`/api/missions/${missionId}/report`),
       api<{ events: CompanyEvent[] }>(`/api/missions/${missionId}/events`),
+      api<{ proposals: AgentProposal[] }>(`/api/missions/${missionId}/proposals`),
     ]);
     setTasks(t.data?.tasks ?? []);
     setReport(rep.data?.report ?? null);
     setEvents(ev.data?.events ?? []);
+    setProposals(pr.data?.proposals ?? []);
   }, []);
   const loadTasks = loadDetail;
 
@@ -75,6 +81,7 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
       setTasks([]);
       setReport(null);
       setEvents([]);
+      setProposals([]);
     }
     setEligibleFor(null);
   }, [selectedId, loadDetail]);
@@ -147,6 +154,23 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   const dispatch = async (taskId: string) => {
     setBusy(taskId);
     const r = await api(`/api/company-tasks/${taskId}/dispatch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setBusy(null);
+    if ((await guard(r)) && selectedId) await loadDetail(selectedId);
+  };
+
+  // ── F2 Agent Factory (operator-triggered; agent CREATED only on approval) ──
+  const proposeAgent = async (taskId: string) => {
+    setBusy(taskId);
+    const r = await api(`/api/company-tasks/${taskId}/propose-agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setBusy(null);
+    if ((await guard(r)) && selectedId) {
+      setEligibleFor(null);
+      await loadDetail(selectedId);
+    }
+  };
+  const decideProposal = async (proposalId: string, decision: 'approve' | 'reject') => {
+    setBusy(proposalId);
+    const r = await api(`/api/agent-proposals/${proposalId}/${decision}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     setBusy(null);
     if ((await guard(r)) && selectedId) await loadDetail(selectedId);
   };
@@ -257,7 +281,14 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                   {eligibleFor?.taskId === t.id && (
                     <div className="mt-2 rounded border border-os-border bg-os-bg p-2">
                       {eligibleFor.agents.length === 0 ? (
-                        <div className="font-mono text-[10px] text-os-dim">No eligible agent found. (Agent Factory arrives in F2 — F0.2 never creates one.)</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 font-mono text-[10px] text-os-dim">No eligible agent. The Agent Factory (F2) can propose one — created only on approval.</div>
+                          {t.requiredCapabilities.length > 0 && (
+                            <button onClick={() => proposeAgent(t.id)} disabled={busy === t.id} className="shrink-0 rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Agent Factory to propose an agent that fills this gap (human-approved)">
+                              {busy === t.id ? '…' : 'Propose agent'}
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <div className="flex flex-col gap-1">
                           {eligibleFor.agents.map((a) => (
@@ -273,6 +304,39 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                 </div>
               ))}
             </div>
+
+            {/* F2 Agent Factory — proposals awaiting a human decision (create only on approval) */}
+            {proposals.length > 0 && (
+              <div className="mt-5">
+                <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.26em] text-os-dim">Agent proposals · {proposals.length}</div>
+                <div className="flex flex-col gap-2">
+                  {proposals.map((p) => (
+                    <div key={p.id} className="rounded-sm-t border border-os-border bg-os-surface p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-[12px] font-semibold text-os-text">{p.spec.name}</span>
+                            <Badge tone={p.status === 'approved' ? 'ok' : p.status === 'rejected' ? 'err' : 'warn'}>{p.status}</Badge>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {p.requiredCapabilities.map((c) => <span key={c} className="rounded-sm-t border border-os-border bg-os-surface2 px-[6px] py-0.5 font-mono text-[9px] text-os-muted">{c}</span>)}
+                            {p.spec.tools.map((tool) => <span key={tool} className="font-mono text-[9px] text-os-dim">·{tool}</span>)}
+                            {p.status === 'approved' && p.agentId && <span className="font-mono text-[9px] text-os-ok">→ {p.agentId}</span>}
+                          </div>
+                          {p.rationale && <div className="mt-1 line-clamp-2 font-mono text-[9.5px] text-os-dim">{p.rationale}</div>}
+                        </div>
+                        {p.status === 'pending' && (
+                          <div className="flex shrink-0 gap-1.5">
+                            <button onClick={() => decideProposal(p.id, 'approve')} disabled={busy === p.id} className="rounded border border-os-ok/50 px-2 py-0.5 font-mono text-[9.5px] uppercase text-os-ok hover:bg-os-ok/10 disabled:opacity-40">Approve</button>
+                            <button onClick={() => decideProposal(p.id, 'reject')} disabled={busy === p.id} className="rounded border border-os-err/50 px-2 py-0.5 font-mono text-[9.5px] uppercase text-os-err hover:bg-os-err/10 disabled:opacity-40">Reject</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* F1 event ledger (append-only; safe metadata only) */}
             {events.length > 0 && (

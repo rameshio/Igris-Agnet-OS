@@ -50,6 +50,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'missions', load: () => import('@/app/api/missions/route'), url: 'http://localhost/api/missions' },
   { route: 'company-tasks/[id]/dependencies', load: () => import('@/app/api/company-tasks/[id]/dependencies/route'), url: 'http://localhost/api/company-tasks/smoke/dependencies', params: { id: 'smoke' } },
   { route: 'missions/[id]/events', load: () => import('@/app/api/missions/[id]/events/route'), url: 'http://localhost/api/missions/smoke/events', params: { id: 'smoke' } },
+  { route: 'missions/[id]/proposals', load: () => import('@/app/api/missions/[id]/proposals/route'), url: 'http://localhost/api/missions/smoke/proposals', params: { id: 'smoke' } },
   { route: 'roadmap', load: () => import('@/app/api/roadmap/route'), url: 'http://localhost/api/roadmap' },
   { route: 'settings/brain', load: () => import('@/app/api/settings/brain/route'), url: 'http://localhost/api/settings/brain' },
   { route: 'social', load: () => import('@/app/api/social/route'), url: 'http://localhost/api/social' },

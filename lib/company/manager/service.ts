@@ -15,6 +15,7 @@ import type { FounderDb } from '@/lib/db';
 import { chat as llmChat } from '@/lib/connectors/llm';
 import { CompanyError, getMission, updateMission, updateCompanyTask, listTasksForMission, getTaskDependencies } from '@/lib/company/service';
 import { dispatchTask, reconcileTask, type DispatchResult } from '@/lib/company/manager/delegation';
+import { retireTemporaryAgents } from '@/lib/company/factory/service';
 import { appendEvent } from '@/lib/company/manager/events';
 import { safeArtifactSummary, deriveMissionComplete, type MissionReport, type MissionTaskCounts, type Blocker, type CapabilityGap } from '@/lib/company/manager/model';
 import { resolveAgentsForCapabilities } from '@/lib/agents/registry';
@@ -73,6 +74,8 @@ export async function managerStep(db: FounderDb, missionId: string, opts: { maxS
   if (statuses.length > 0 && deriveMissionComplete(statuses) && current.status !== 'completed') {
     updateMission(db, missionId, { status: 'completed' });
     appendEvent(db, { type: 'MISSION_COMPLETED', missionId, summary: 'Mission completed' });
+    // Retire any temporary F2 factory agents bound to this mission (bounded, one pass).
+    retireTemporaryAgents(db, missionId);
   }
 
   return { mission: getMission(db, missionId)!, dispatched, report: missionReport(db, missionId) };

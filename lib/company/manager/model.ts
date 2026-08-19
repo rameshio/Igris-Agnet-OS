@@ -105,6 +105,11 @@ export const COMPANY_EVENT_TYPES = [
   'TASK_COMPLETED',
   'TASK_FAILED',
   'CAPABILITY_GAP',
+  // Agent Factory (F2) — human-gated dynamic agent creation that fills a gap.
+  'AGENT_PROPOSED',
+  'AGENT_PROMOTED',
+  'AGENT_REJECTED',
+  'AGENT_RETIRED',
   'MISSION_COMPLETED',
   'MISSION_FAILED',
 ] as const;
