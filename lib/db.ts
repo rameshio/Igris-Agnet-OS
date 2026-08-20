@@ -961,6 +961,10 @@ export function openDb(path: string) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(m.id, m.title, m.objective ?? '', m.status, m.priority, m.createdBy ?? null, m.createdAt, m.updatedAt, m.startedAt ?? null, m.completedAt ?? null);
     },
+    /** Delete one mission row (test-data cleanup; the service cascades owned records first). */
+    delete(id: string): void {
+      db.prepare('DELETE FROM company_missions WHERE id = ?').run(id);
+    },
   };
 
   type CompanyTaskRow = {
@@ -999,6 +1003,10 @@ export function openDb(path: string) {
     /** Every company task across all missions, oldest first (F6 Company Intelligence read model). */
     all(): CompanyTask[] {
       return db.prepare('SELECT * FROM company_tasks ORDER BY created_at, id').all().map((r) => rowToCompanyTask(r as CompanyTaskRow));
+    },
+    /** Delete every task of a mission (test-data cleanup; mission-scoped only). */
+    deleteForMission(missionId: string): number {
+      return db.prepare('DELETE FROM company_tasks WHERE mission_id = ?').run(missionId).changes;
     },
     insert(t: CompanyTask): void {
       db.prepare(
@@ -1040,6 +1048,10 @@ export function openDb(path: string) {
     },
     forMission(missionId: string): CompanyArtifact[] {
       return db.prepare('SELECT * FROM company_artifacts WHERE mission_id = ? ORDER BY created_at, id').all(missionId).map((r) => rowToArtifact(r as CompanyArtifactRow));
+    },
+    /** Delete every artifact of a mission (test-data cleanup; mission-scoped only). */
+    deleteForMission(missionId: string): number {
+      return db.prepare('DELETE FROM company_artifacts WHERE mission_id = ?').run(missionId).changes;
     },
     forTask(taskId: string): CompanyArtifact[] {
       return db.prepare('SELECT * FROM company_artifacts WHERE task_id = ? ORDER BY created_at, id').all(taskId).map((r) => rowToArtifact(r as CompanyArtifactRow));
@@ -1111,6 +1123,13 @@ export function openDb(path: string) {
     forAgent(agentId: string, limit = 200): CompanyEvent[] {
       return db.prepare('SELECT * FROM company_events WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?').all(agentId, limit).map((r) => rowToEvent(r as CompanyEventRow));
     },
+    /** Delete every event of a mission — including events for its tasks (test-data cleanup). */
+    deleteForMission(missionId: string, taskIds: string[] = []): number {
+      let changes = db.prepare('DELETE FROM company_events WHERE mission_id = ?').run(missionId).changes;
+      const del = db.prepare('DELETE FROM company_events WHERE task_id = ?');
+      for (const t of taskIds) changes += del.run(t).changes;
+      return changes;
+    },
   };
 
   type CompanyTaskDepRow = { task_id: string; depends_on_task_id: string; created_at: string };
@@ -1136,6 +1155,12 @@ export function openDb(path: string) {
     },
     remove(taskId: string, dependsOnTaskId: string): void {
       db.prepare('DELETE FROM company_task_dependencies WHERE task_id = ? AND depends_on_task_id = ?').run(taskId, dependsOnTaskId);
+    },
+    /** Delete every dependency edge whose endpoints belong to a mission (test-data cleanup). */
+    deleteForMission(missionId: string): number {
+      return db
+        .prepare('DELETE FROM company_task_dependencies WHERE task_id IN (SELECT id FROM company_tasks WHERE mission_id = ?)')
+        .run(missionId).changes;
     },
   };
 
@@ -1206,6 +1231,10 @@ export function openDb(path: string) {
     /** Link the created agent onto an already-approved proposal (promotion step 2). */
     setAgent(id: string, agentId: string): void {
       db.prepare('UPDATE company_agent_proposals SET agent_id = ?, updated_at = ? WHERE id = ?').run(agentId, new Date().toISOString(), id);
+    },
+    /** Delete every proposal of a mission (test-data cleanup; mission-scoped only). */
+    deleteForMission(missionId: string): number {
+      return db.prepare('DELETE FROM company_agent_proposals WHERE mission_id = ?').run(missionId).changes;
     },
   };
 

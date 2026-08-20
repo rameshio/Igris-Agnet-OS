@@ -16,14 +16,15 @@ describe('/brain header capture + graph placement', () => {
     expect(page).not.toMatch(/<section[^>]*>\s*<BrainDump \/>/);
   });
 
-  test('the knowledge graph is the first section after the header', () => {
+  test('the consolidated G-Brain is the first thing after the header (one brain, no duplicate)', () => {
     const page = read('app/brain/page.tsx');
     const header = page.indexOf('<PageHeader');
-    const graph = page.indexOf('Knowledge graph');
-    const firstSection = page.indexOf('<section', header);
-    expect(graph).toBeGreaterThan(header);
-    // the first section on the page IS the graph section
-    expect(page.indexOf('BrainGraphView', firstSection)).toBeLessThan(page.indexOf('</section>', firstSection));
+    const brain = page.indexOf('<BrainWorkspace');
+    expect(brain).toBeGreaterThan(header);
+    // it sits above the external brain-store viz (pillar health / storage layers)
+    expect(brain).toBeLessThan(page.indexOf('Storage layers'));
+    // the retired duplicate radial/neural workspace is gone
+    expect(page).not.toMatch(/BrainGraphView/);
   });
 
   test('BrainDump has a compact mode with document drop that reads files as text', () => {

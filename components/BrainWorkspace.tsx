@@ -1,40 +1,42 @@
 'use client';
 
 /**
- * G-Brain workspace (Architecture V2 · F4 + F5) — the [Radial][Neural] tabbed view over the
- * canonical G-Brain. Radial (F4) = STRUCTURAL: search/deep-link to a root, click to inspect,
- * double-click to focus (re-root). Neural (F5) = OPERATIONAL: a bounded, polled projection of
- * live/recent execution over a time window. Both share the selection + Universal Inspector;
- * Activity (U4) remains the chronological list.
+ * G-Brain workspace (Architecture V2 · consolidation) — the ONE brain. The original
+ * attractive radial + neural renderers (KnowledgeGraph / NeuralGraph) are the visual
+ * shell; their data is now CANONICAL (structural = company→missions→tasks→agents→
+ * artifacts/knowledge · operational = the read-only F5 projection over company_events).
  *
- * Deep-link: `/brain?entity=<kind:id|bent-…>`. The initial render is deterministic (empty);
- * the URL is read in a mount effect (SSR/hydration-safe, per U1/U6). React never touches
- * SQLite; every read is a bounded API call, and mutating actions route to existing endpoints.
+ * This component is the CONTROLLER: it owns the [Radial][Neural] tab, fetches the
+ * bounded canonical graph, threads selection into the ONE Universal Inspector, runs
+ * G-Brain search, and honours the `?entity=` deep-link as a FOCUS on the same brain.
+ * Opening `/brain` with no entity shows a bounded company-wide overview (never blank).
+ * React never touches SQLite; every read is a bounded API call.
  */
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { RadialGraph } from '@/lib/brain/projection/model';
-import type { NeuralGraph } from '@/lib/brain/neural/model';
+import type { KnowledgeGraph as KGData } from '@/lib/knowledge-graph';
 import type { InspectorAction, InspectorView } from '@/lib/brain/inspector/model';
 import type { BrainSearchHit } from '@/lib/brain/core/search';
-import { BrainRadial } from '@/components/BrainRadial';
-import { BrainNeural } from '@/components/BrainNeural';
+import { inspectTargetForKgId } from '@/lib/brain/kg-ids';
 import { UniversalInspector } from '@/components/UniversalInspector';
 import { SectionHead } from '@/components/terminal';
 
-const INSPECTABLE = new Set(['agent', 'mission', 'company_task', 'artifact', 'knowledge', 'workflow', 'source', 'approval', 'workflow_run', 'event']);
+type CompanyBrainGraph = { graph: KGData; focusNodeId?: string };
+
 const NEURAL_POLL_MS = 5000;
 const NEURAL_WINDOW_OPTIONS = ['15m', '1h', '6h', '24h'] as const;
 
-/** A radial node id is `keyKind:id`; map it to an Inspector {kind,id} (company_task → task). */
-function inspectTarget(nodeId: string): { kind: string; id: string } | null {
-  const i = nodeId.indexOf(':');
-  if (i < 0) return null;
-  const keyKind = nodeId.slice(0, i);
-  const id = nodeId.slice(i + 1);
-  if (!INSPECTABLE.has(keyKind)) return null;
-  return { kind: keyKind === 'company_task' ? 'task' : keyKind, id };
-}
+const RADIAL_SKELETON = (
+  <div className="flex flex-col gap-3 lg:flex-row">
+    <div className="h-[680px] min-w-0 flex-1 animate-pulse rounded-lg-t border border-os-border bg-os-surface" />
+    <div className="hidden shrink-0 rounded-lg-t border border-os-border bg-os-surface lg:block lg:h-[680px] lg:w-72" />
+  </div>
+);
+const NEURAL_SKELETON = <div className="w-full animate-pulse overflow-hidden rounded-lg-t border border-os-border bg-os-surface" style={{ aspectRatio: '1200 / 640' }} />;
+
+const KnowledgeGraph = dynamic(() => import('@/components/KnowledgeGraph').then((m) => m.KnowledgeGraph), { ssr: false, loading: () => RADIAL_SKELETON });
+const NeuralGraph = dynamic(() => import('@/components/NeuralGraph').then((m) => m.NeuralGraph), { ssr: false, loading: () => NEURAL_SKELETON });
 
 async function getJson<T>(url: string): Promise<T | null> {
   try {
@@ -49,8 +51,8 @@ export function BrainWorkspace() {
   const router = useRouter();
   const [tab, setTab] = useState<'radial' | 'neural'>('radial');
   const [root, setRoot] = useState<string | null>(null);
-  const [graph, setGraph] = useState<RadialGraph | null>(null);
-  const [graphLoading, setGraphLoading] = useState(false);
+  const [structural, setStructural] = useState<CompanyBrainGraph | null>(null);
+  const [operational, setOperational] = useState<CompanyBrainGraph | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<InspectorView | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
@@ -58,46 +60,37 @@ export function BrainWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BrainSearchHit[] | null>(null);
-  // Neural (F5) — operational projection, polled while the Neural tab is active.
-  const [neural, setNeural] = useState<NeuralGraph | null>(null);
-  const [neuralLoading, setNeuralLoading] = useState(false);
-  const [neuralError, setNeuralError] = useState<string | null>(null);
   const [neuralWindow, setNeuralWindow] = useState<string>('1h');
   const neuralInFlight = useRef(false);
 
-  const loadRadial = useCallback(async (entity: string) => {
-    setGraphLoading(true);
-    const g = await getJson<RadialGraph>(`/api/brain/radial?entity=${encodeURIComponent(entity)}&depth=1`);
-    setGraphLoading(false);
-    if (g && 'nodes' in g) {
-      setGraph(g);
+  const loadStructural = useCallback(async (entity: string | null): Promise<CompanyBrainGraph | null> => {
+    const q = entity ? `?entity=${encodeURIComponent(entity)}` : '';
+    const g = await getJson<CompanyBrainGraph>(`/api/brain/company-graph${q}`);
+    if (g && 'graph' in g) {
+      setStructural(g);
       setError(null);
-    } else {
-      setError('Could not load that entity.');
+      return g;
     }
+    setError('Could not load the company brain.');
+    return null;
   }, []);
 
-  const focus = useCallback(
-    (entity: string) => {
-      setRoot(entity);
-      setSelectedId(entity);
-      setHits(null);
-      if (typeof window !== 'undefined') window.history.replaceState(null, '', `/brain?entity=${encodeURIComponent(entity)}`);
-      void loadRadial(entity);
-    },
-    [loadRadial],
-  );
-
-  // Hydrate the root from the URL on mount (deterministic first render → no hydration mismatch).
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const entity = new URLSearchParams(window.location.search).get('entity');
-    if (entity) focus(entity);
-  }, [focus]);
+  const loadOperational = useCallback(async (entity: string | null) => {
+    if (neuralInFlight.current) return; // no-overlap guard
+    neuralInFlight.current = true;
+    try {
+      const params = new URLSearchParams({ mode: 'operational', window: neuralWindow });
+      if (entity) params.set('entity', entity);
+      const g = await getJson<CompanyBrainGraph>(`/api/brain/company-graph?${params.toString()}`);
+      if (g && 'graph' in g) setOperational(g);
+    } finally {
+      neuralInFlight.current = false;
+    }
+  }, [neuralWindow]);
 
   const selectNode = useCallback(async (nodeId: string) => {
     setSelectedId(nodeId);
-    const target = inspectTarget(nodeId);
+    const target = inspectTargetForKgId(nodeId);
     if (!target) {
       setView(null);
       return;
@@ -108,49 +101,46 @@ export function BrainWorkspace() {
     setView(res?.view ?? null);
   }, []);
 
+  const focus = useCallback(
+    async (entity: string) => {
+      setRoot(entity);
+      setHits(null);
+      if (typeof window !== 'undefined') window.history.replaceState(null, '', `/brain?entity=${encodeURIComponent(entity)}`);
+      const g = await loadStructural(entity);
+      void loadOperational(entity);
+      // The builder returns the focused entity's KG node id — open the ONE Inspector on it.
+      if (g?.focusNodeId) void selectNode(g.focusNodeId);
+    },
+    [loadStructural, loadOperational, selectNode],
+  );
+
+  // Initial load: honour the ?entity= deep-link (focus) or show the company-wide overview.
+  useEffect(() => {
+    const entity = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('entity') : null;
+    if (entity) focus(entity);
+    else void loadStructural(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Poll the operational projection only while the Neural tab is active.
+  useEffect(() => {
+    if (tab !== 'neural') return;
+    void loadOperational(root);
+    const id = setInterval(() => void loadOperational(root), NEURAL_POLL_MS);
+    return () => clearInterval(id);
+  }, [tab, root, loadOperational]);
+
   const runSearch = async () => {
     if (!query.trim()) return setHits(null);
     const res = await getJson<{ results: BrainSearchHit[] }>(`/api/brain/search?q=${encodeURIComponent(query.trim())}`);
     setHits(res?.results ?? []);
   };
 
-  // Neural loader with a no-overlap guard (never issues a second request while one is pending).
-  const loadNeural = useCallback(async () => {
-    if (neuralInFlight.current) return;
-    neuralInFlight.current = true;
-    setNeuralLoading(true);
-    try {
-      const params = new URLSearchParams({ window: neuralWindow });
-      if (root) params.set('entity', root);
-      const res = await fetch(`/api/brain/neural?${params.toString()}`);
-      if (res.ok) {
-        setNeural((await res.json()) as NeuralGraph);
-        setNeuralError(null);
-      } else {
-        setNeuralError('Neural projection unavailable');
-      }
-    } catch {
-      setNeuralError('Neural projection unavailable');
-    } finally {
-      setNeuralLoading(false);
-      neuralInFlight.current = false;
-    }
-  }, [neuralWindow, root]);
-
-  // Poll ONLY while the Neural tab is active; stop on unmount / tab switch / window change.
-  useEffect(() => {
-    if (tab !== 'neural') return;
-    void loadNeural();
-    const id = setInterval(() => void loadNeural(), NEURAL_POLL_MS);
-    return () => clearInterval(id);
-  }, [tab, loadNeural]);
-
   const runAction = async (action: InspectorAction) => {
     if (action.kind === 'navigate') {
       router.push(action.href);
       return;
     }
-    // api action — confirm, then call the EXISTING endpoint (never a new mutation path).
     if (typeof window !== 'undefined' && !window.confirm(`${action.label}?`)) return;
     setBusy(true);
     try {
@@ -159,12 +149,12 @@ export function BrainWorkspace() {
       setBusy(false);
     }
     if (selectedId) await selectNode(selectedId);
-    if (root) await loadRadial(root);
+    await loadStructural(root);
   };
 
   return (
     <section className="rounded-lg-t border border-os-border bg-os-surface p-5">
-      <SectionHead label="G-Brain · Structure" />
+      <SectionHead label="G-Brain" />
       <div className="mb-3 mt-1 flex flex-wrap items-center gap-2">
         {(['radial', 'neural'] as const).map((v) => (
           <button
@@ -176,6 +166,11 @@ export function BrainWorkspace() {
             {v}
           </button>
         ))}
+        {root && (
+          <button onClick={() => { setRoot(null); void loadStructural(null); if (typeof window !== 'undefined') window.history.replaceState(null, '', '/brain'); }} className="rounded-sm-t border border-os-border px-2 py-1 font-mono text-[9.5px] uppercase text-os-dim hover:text-os-accent">
+            ↺ overview
+          </button>
+        )}
         <div className="ml-auto flex min-w-[220px] flex-1 gap-1.5 sm:max-w-[360px]">
           <input
             value={query}
@@ -197,7 +192,7 @@ export function BrainWorkspace() {
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {hits.map((h) => (
-                <button key={`${h.kind}:${h.id}`} onClick={() => focus(h.id)} className="rounded border border-os-border px-2 py-0.5 font-mono text-[9.5px] text-os-muted hover:border-os-accent/50 hover:text-os-accent">
+                <button key={`${h.kind}:${h.id}`} onClick={() => focus(`${h.kind}:${h.id}`)} className="rounded border border-os-border px-2 py-0.5 font-mono text-[9.5px] text-os-muted hover:border-os-accent/50 hover:text-os-accent">
                   <span className="uppercase text-os-dim">{h.kind}</span> {h.title}
                 </button>
               ))}
@@ -209,8 +204,12 @@ export function BrainWorkspace() {
       {tab === 'radial' ? (
         <div className="flex flex-col gap-4 lg:flex-row">
           <div className="min-w-0 flex-1">
-            <BrainRadial graph={graph} loading={graphLoading} selectedId={selectedId} onSelect={(id) => void selectNode(id)} onFocus={focus} />
-            <p className="mt-1 font-mono text-[9px] text-os-dim">Solid edge = persisted G-Brain relationship · dashed = live projection from canonical systems (never persisted).</p>
+            {structural ? (
+              <KnowledgeGraph graph={structural.graph} focusNodeId={structural.focusNodeId ?? null} onSelectNode={(id) => void selectNode(id)} hideDirectory />
+            ) : (
+              RADIAL_SKELETON
+            )}
+            <p className="mt-1 font-mono text-[9px] text-os-dim">One canonical brain · company → missions → tasks → agents → artifacts/knowledge · click a node to inspect · projection, never persisted.</p>
           </div>
           <UniversalInspector view={view} loading={viewLoading} busy={busy} onAction={runAction} />
         </div>
@@ -226,7 +225,11 @@ export function BrainWorkspace() {
               ))}
               {root && <span className="ml-2 truncate font-mono text-[9px] text-os-dim">focus: {root}</span>}
             </div>
-            <BrainNeural graph={neural} loading={neuralLoading} error={neuralError} selectedId={selectedId} onSelect={(id) => void selectNode(id)} />
+            {operational ? (
+              <NeuralGraph graph={operational.graph} onSelectNode={(id) => void selectNode(id)} hideDirectory />
+            ) : (
+              NEURAL_SKELETON
+            )}
             <p className="mt-1 font-mono text-[9px] text-os-dim">Operational projection over company_events + current canonical state · read-only · Activity (U4) is the chronological list.</p>
           </div>
           <UniversalInspector view={view} loading={viewLoading} busy={busy} onAction={runAction} />

@@ -207,6 +207,7 @@ type SimLink = { source: SimNode | string; target: SimNode | string; kind: strin
 export function KnowledgeGraph({
   graph, agents = [], departments = [], people = [], tasks = [], memory, clients = [], runsByAgent = {},
   repelDefault = 150, linkDistDefault = 60, centerDefault = 0.32,
+  onSelectNode, focusNodeId, hideDirectory,
 }: {
   graph: KGData; agents?: Agent[]; departments?: Department[]; people?: Person[]; tasks?: SopTask[];
   /** distilled brain-store constellation drawn at the core (Alex = his memory) */
@@ -217,6 +218,15 @@ export function KnowledgeGraph({
   runsByAgent?: Record<string, AgentRun>;
   /** physics tuning (the in-UI editor is retired; these still configure the sim) */
   repelDefault?: number; linkDistDefault?: number; centerDefault?: number;
+  /**
+   * G-Brain consolidation: when set, a node/directory click reports the KG node id UP
+   * to the controller (which opens the ONE Universal Inspector) instead of opening the
+   * legacy internal detail cards. `focusNodeId` seeds the ring focus (deep-link focus).
+   */
+  onSelectNode?: (id: string) => void;
+  focusNodeId?: string | null;
+  /** Consolidated mode: hide the org-shaped directory (the Inspector replaces it). */
+  hideDirectory?: boolean;
 }) {
   // fixed physics — the slider editor gave way to the always-on directory
   const centerForce = centerDefault;
@@ -224,6 +234,10 @@ export function KnowledgeGraph({
   const linkDist = linkDistDefault;
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
+  // Deep-link focus (consolidated mode): the controller seeds the ring focus.
+  useEffect(() => {
+    if (focusNodeId !== undefined) setFocusId(focusNodeId ?? null);
+  }, [focusNodeId]);
   // legend filter: kinds toggled off here are hidden from the graph (nodes + edges)
   const [hiddenKinds, setHiddenKinds] = useState<Set<KGNodeKind>>(() => new Set());
   const toggleKind = (k: KGNodeKind) =>
@@ -1422,6 +1436,13 @@ export function KnowledgeGraph({
     [agents, departments, people, tasks, graph],
   );
   const pickFromDirectory = (kind: DirectoryGroup['kind'], id: string) => {
+    if (onSelectNode) {
+      const nodeId = kind === 'tool' ? graph.nodes.find((n) => n.kind === 'tool' && toolSlugOf(n.id) === id)?.id ?? null : id;
+      if (nodeId) {
+        onSelectNode(nodeId);
+        return;
+      }
+    }
     if (kind === 'tool') selectToolSlug(id);
     else if (kind === 'task') selectTask(id);
     else selectWorker(id);
@@ -1434,7 +1455,7 @@ export function KnowledgeGraph({
     const nodeId = kind === 'tool' ? graph.nodes.find((n) => n.kind === 'tool' && toolSlugOf(n.id) === id)?.id ?? null : id;
     setHoverId(nodeId);
   };
-  const directoryPanel = (
+  const directoryPanel = hideDirectory ? null : (
     <GraphDirectory groups={directory} onPick={pickFromDirectory} onHover={hoverFromDirectory} collapsed={directoryCollapsed} onToggleCollapse={() => setDirectoryCollapsed((v) => !v)} className="h-full" />
   );
 
@@ -1494,6 +1515,14 @@ export function KnowledgeGraph({
   ) : null;
 
   const onNodeClick = (n: KGNode) => {
+    // Consolidated mode: delegate detail to the controller's Universal Inspector,
+    // keep the pretty ring focus for visual feedback, never open a legacy card.
+    if (onSelectNode) {
+      onSelectNode(n.id);
+      if (n.kind === 'self') setFocusId(null);
+      else setFocusId((f) => (n.kind === 'employee' || n.kind === 'person' ? n.id : teamForFocus(n.id) ?? f));
+      return;
+    }
     if (n.kind === 'self') {
       // Alex IS the memory: clicking him dives into (or out of) the
       // constellation. Without memory data he stays the old clear-all anchor.
@@ -2388,9 +2417,11 @@ export function KnowledgeGraph({
             </div>
           </div>
 
-          <div className={`flex min-h-0 flex-1 flex-col ${directoryCollapsed ? '' : 'border-t border-os-border pt-3'}`}>
-            <div className="min-h-0 flex-1">{directoryPanel}</div>
-          </div>
+          {directoryPanel && (
+            <div className={`flex min-h-0 flex-1 flex-col ${directoryCollapsed ? '' : 'border-t border-os-border pt-3'}`}>
+              <div className="min-h-0 flex-1">{directoryPanel}</div>
+            </div>
+          )}
         </aside>
       </div>
     </>

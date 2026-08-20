@@ -17,7 +17,9 @@ import { z } from 'zod';
 import { isValidCapabilityId, normalizeCapabilityId } from '@/lib/agents/capabilities';
 
 // ── Enums ────────────────────────────────────────────────────────────────────
-export const MISSION_STATUSES = ['draft', 'active', 'blocked', 'completed', 'failed', 'cancelled'] as const;
+// `archived` (G-Brain consolidation) — a terminal, hidden-from-default-view state.
+// A mission can be archived from ANY state (lifecycle-safe cleanup; provenance kept).
+export const MISSION_STATUSES = ['draft', 'active', 'blocked', 'completed', 'failed', 'cancelled', 'archived'] as const;
 export type MissionStatus = (typeof MISSION_STATUSES)[number];
 
 export const COMPANY_TASK_STATUSES = [
@@ -126,6 +128,9 @@ export type CompanyTaskUpdate = z.infer<typeof CompanyTaskUpdateSchema>;
 // F0.2 does NOT drive states automatically; these guard manual/service updates so
 // a status can never jump arbitrarily. Same-status is always a no-op.
 
+// `archived` is a terminal state reached via the cleanup seam's DIRECT write
+// (archiveMission), never through this normal transition graph — so completed/
+// failed/cancelled remain terminal here and `isMissionTerminal` stays honest.
 export const MISSION_TRANSITIONS: Record<MissionStatus, MissionStatus[]> = {
   draft: ['active', 'cancelled'],
   active: ['blocked', 'completed', 'failed', 'cancelled'],
@@ -133,6 +138,7 @@ export const MISSION_TRANSITIONS: Record<MissionStatus, MissionStatus[]> = {
   completed: [],
   failed: [],
   cancelled: [],
+  archived: [],
 };
 
 export const TASK_TRANSITIONS: Record<CompanyTaskStatus, CompanyTaskStatus[]> = {

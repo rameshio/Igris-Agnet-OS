@@ -15,6 +15,7 @@ import type { Mission, CompanyTask, CompanyTaskStatus } from '@/lib/company/mode
 import { COMPANY_TASK_STATUSES } from '@/lib/company/model';
 import type { MissionReport, CompanyEvent } from '@/lib/company/manager/model';
 import type { AgentProposal } from '@/lib/company/factory/model';
+import type { MissionCleanupPreview } from '@/lib/company/cleanup/service';
 import type { AgentMatch } from '@/lib/agents/capabilities';
 import { Badge } from '@/components/terminal';
 
@@ -53,8 +54,11 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const selected = missions.find((m) => m.id === selectedId) ?? null;
+  // Archived missions are hidden from the default view (kept, not deleted).
+  const visibleMissions = missions.filter((m) => showArchived || m.status !== 'archived');
 
   const loadMissions = useCallback(async () => {
     const r = await api<{ missions: Mission[] }>('/api/missions');
@@ -181,6 +185,37 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     if (await guard(r)) await loadMissions();
   };
 
+  // ── Cleanup seam (consolidation): archive (lifecycle-safe) + delete-test (U3 preview→confirm) ──
+  const archiveMission = async () => {
+    if (!selectedId) return;
+    setBusy('archive');
+    const r = await api(`/api/missions/${selectedId}/archive`, { method: 'POST' });
+    setBusy(null);
+    if (await guard(r)) await loadMissions();
+  };
+
+  const deleteMission = async () => {
+    if (!selectedId) return;
+    const p = await api<MissionCleanupPreview>(`/api/missions/${selectedId}/cleanup-preview`);
+    if (!(await guard(p)) || !p.data) return;
+    const d = p.data;
+    const msg = [
+      `Delete test mission "${d.title}"? This cannot be undone.`,
+      ``,
+      `Removes (mission-owned only): ${d.willDelete.tasks} tasks · ${d.willDelete.dependencies} deps · ${d.willDelete.artifacts} artifacts · ${d.willDelete.events} events · ${d.willDelete.proposals} proposals`,
+      `Retires (not deleted): ${d.temporaryAgentsToRetire.length} temporary agent(s)`,
+      `Preserved untouched: ${d.preserved.sharedAgents.length} shared agent(s) · ${d.preserved.workflows.length} workflow(s) · ${d.preserved.durableKnowledgeUntouched} knowledge item(s)`,
+    ].join('\n');
+    if (typeof window !== 'undefined' && !window.confirm(msg)) return;
+    setBusy('delete');
+    const r = await api(`/api/missions/${selectedId}/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+    setBusy(null);
+    if (await guard(r)) {
+      setSelectedId(null);
+      await loadMissions();
+    }
+  };
+
   // ── F3 G-Brain: explicit artifact → knowledge promotion (never automatic) ──
   const promoteArtifact = async (artifactId: string) => {
     setBusy(artifactId);
@@ -193,14 +228,19 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     <div className="grid grid-cols-[300px_1fr] gap-5 max-[900px]:grid-cols-1">
       {/* Missions list */}
       <div className="min-w-0">
-        <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.26em] text-os-dim">Missions · {missions.length}</div>
+        <div className="mb-2 flex items-center justify-between font-mono text-[10px] font-bold uppercase tracking-[0.26em] text-os-dim">
+          <span>Missions · {visibleMissions.length}</span>
+          {missions.some((m) => m.status === 'archived') && (
+            <button onClick={() => setShowArchived((v) => !v)} className="tracking-normal text-os-dim transition-colors hover:text-os-accent">{showArchived ? 'hide archived' : 'show archived'}</button>
+          )}
+        </div>
         <div className="mb-3 flex gap-1.5">
           <input value={newMission} onChange={(e) => setNewMission(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createMission()} placeholder="New mission…" className="min-w-0 flex-1 rounded border border-os-border bg-os-bg px-2 py-1.5 font-mono text-[11px] text-os-text placeholder:text-os-dim" />
           <button onClick={createMission} className="shrink-0 rounded border border-os-border-strong px-2 py-1.5 font-mono text-[10px] uppercase text-os-muted hover:text-os-text">Add</button>
         </div>
         <div className="flex flex-col gap-1.5">
-          {missions.length === 0 && <p className="rounded border border-os-border bg-os-surface px-3 py-4 text-center font-mono text-[10.5px] text-os-dim">No missions yet.</p>}
-          {missions.map((m) => (
+          {visibleMissions.length === 0 && <p className="rounded border border-os-border bg-os-surface px-3 py-4 text-center font-mono text-[10.5px] text-os-dim">No missions yet.</p>}
+          {visibleMissions.map((m) => (
             <button key={m.id} onClick={() => setSelectedId(m.id)} className={`rounded-sm-t border px-3 py-2 text-left transition-colors ${selectedId === m.id ? 'border-os-accent/50 bg-os-surface2' : 'border-os-border bg-os-surface hover:border-os-border-strong'}`}>
               <div className="truncate text-[12.5px] font-semibold text-os-text">{m.title}</div>
               <div className="mt-0.5 font-mono text-[9.5px] uppercase tracking-wide text-os-dim">{m.status} · {m.priority}</div>
@@ -219,9 +259,16 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-[16px] font-bold text-os-text">{selected.title}</h2>
               <div className="flex shrink-0 items-center gap-2">
-                <a href={`/brain?entity=mission:${selected.id}`} className="rounded border border-os-border px-2 py-1 font-mono text-[9.5px] uppercase text-os-dim hover:border-os-accent/50 hover:text-os-accent" title="View this mission's structure in G-Brain (F4)">View in G-Brain</a>
-                <select value={selected.status} onChange={(e) => setMissionStatus(e.target.value)} className="rounded border border-os-border bg-os-bg px-2 py-1 font-mono text-[10px] uppercase text-os-muted">
+                <a href={`/brain?entity=mission:${selected.id}`} className="rounded border border-os-border px-2 py-1 font-mono text-[9.5px] uppercase text-os-dim hover:border-os-accent/50 hover:text-os-accent" title="View this mission's structure in G-Brain">View in G-Brain</a>
+                {selected.status !== 'archived' ? (
+                  <button onClick={archiveMission} disabled={busy === 'archive'} className="rounded border border-os-border px-2 py-1 font-mono text-[9.5px] uppercase text-os-dim hover:border-os-warn/50 hover:text-os-warn disabled:opacity-50" title="Hide from the default view; keeps everything">{busy === 'archive' ? '…' : 'Archive'}</button>
+                ) : (
+                  <span className="rounded border border-os-border px-2 py-1 font-mono text-[9.5px] uppercase text-os-dim">archived</span>
+                )}
+                <button onClick={deleteMission} disabled={busy === 'delete'} className="rounded border border-os-err/40 px-2 py-1 font-mono text-[9.5px] uppercase text-os-err hover:bg-os-err/10 disabled:opacity-50" title="Delete this test mission and its owned records (preview → confirm); shared agents/workflows/knowledge are preserved">{busy === 'delete' ? 'deleting…' : 'Delete test'}</button>
+                <select value={selected.status === 'archived' ? 'archived' : selected.status} onChange={(e) => setMissionStatus(e.target.value)} disabled={selected.status === 'archived'} className="rounded border border-os-border bg-os-bg px-2 py-1 font-mono text-[10px] uppercase text-os-muted disabled:opacity-60">
                   {['draft', 'active', 'blocked', 'completed', 'failed', 'cancelled'].map((s) => <option key={s} value={s}>{s}</option>)}
+                  {selected.status === 'archived' && <option value="archived">archived</option>}
                 </select>
               </div>
             </div>

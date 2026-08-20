@@ -3,7 +3,6 @@ import { attioClients } from '@/lib/connectors/attio';
 import { readVaultNotes } from '@/lib/connectors/obsidian';
 import type { RosterClient } from '@/lib/schemas';
 import { buildBrainGraph } from '@/lib/brain-graph';
-import { buildKnowledgeGraph } from '@/lib/knowledge-graph';
 import { distillMemoryGraph, type MemoryGraph } from '@/lib/memory-core';
 import { foldersToClusters } from '@/lib/brain-viz';
 import { getDb } from '@/lib/data';
@@ -11,7 +10,6 @@ import { PageHeader } from '@/components/PageHeader';
 import { BrainCore } from '@/components/BrainCore';
 import { PillarRadar } from '@/components/PillarRadar';
 import { pillarRadarAxes } from '@/lib/pillar-radar';
-import { BrainGraphView } from '@/components/BrainGraphView';
 import { BrainDump } from '@/components/BrainDump';
 import { BrainCorePanel } from '@/components/BrainCorePanel';
 import { BrainWorkspace } from '@/components/BrainWorkspace';
@@ -147,7 +145,6 @@ export default async function BrainPage() {
   const overview = await createGBrainProvider().overview();
   const { store, doctor } = overview;
   const db = getDb();
-  const knowledgeGraph = buildKnowledgeGraph(db.agents.all(), db.departments.all(), db.people.all(), db.sopTasks.all());
   const maxFiles = Math.max(1, ...store.folders.map((f) => f.files));
   const clusters = foldersToClusters(store.folders);
   const storeShort = store.path.replace(process.env.HOME ?? '', '~');
@@ -204,25 +201,13 @@ export default async function BrainPage() {
         right={<BrainDump compact />}
       />
 
-      {/* Architecture V2 · F4 — canonical structural view (Radial + Universal Inspector).
-          Distinct from the org/life constellation below (which stays untouched). */}
+      {/* Architecture V2 · consolidation — the ONE G-Brain: the original attractive
+          radial + neural renderers, now driven by CANONICAL company data (structural +
+          operational), with the Universal Inspector, search, and ?entity= deep-link focus.
+          There is no second Radial/Neural workspace. */}
       <div className="mt-5">
         <BrainWorkspace />
       </div>
-
-      <section className="mt-5">
-        <SectionHead label="Knowledge graph" count={`${knowledgeGraph.nodes.length} nodes`} />
-        <BrainGraphView
-          graph={knowledgeGraph}
-          agents={db.agents.all()}
-          departments={db.departments.all()}
-          people={db.people.all()}
-          tasks={db.sopTasks.all()}
-          memory={memoryConstellation()}
-          clients={await clientRoster(db)}
-          runsByAgent={runsByAgent}
-        />
-      </section>
 
       {/* G-Brain knowledge core: the PILLAR SPIDER CHART on the LEFT, the
           radar/health monitor on the RIGHT — a 50/50 split of the row.

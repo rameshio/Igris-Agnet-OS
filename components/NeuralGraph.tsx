@@ -56,7 +56,7 @@ const hoverKind = (id: string): string => {
 };
 
 export function NeuralGraph({
-  graph, agents = [], departments = [], people = [], tasks = [], runsByAgent = {},
+  graph, agents = [], departments = [], people = [], tasks = [], runsByAgent = {}, onSelectNode, hideDirectory,
 }: {
   graph: KGData;
   agents?: Agent[];
@@ -64,6 +64,11 @@ export function NeuralGraph({
   people?: Person[];
   tasks?: SopTask[];
   runsByAgent?: Record<string, AgentRun>;
+  /** G-Brain consolidation: report a clicked neuron UP to the controller's Universal
+   *  Inspector instead of opening the legacy NeuralDetail overlay. */
+  onSelectNode?: (id: string) => void;
+  /** Consolidated mode: hide the org-shaped directory (the Inspector replaces it). */
+  hideDirectory?: boolean;
 }) {
   const { layers, pos, strands, reports } = useMemo(() => neuralLayout(graph), [graph]);
   const labelById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n.label])), [graph]);
@@ -83,8 +88,11 @@ export function NeuralGraph({
       : id;
   const hoverFromDirectory = (kind: DirectoryGroup['kind'], id: string | null) =>
     setHoverId(id ? nodeIdForRow(kind, id) : null);
-  const pickFromDirectory = (kind: DirectoryGroup['kind'], id: string) =>
-    setSelectedId(nodeIdForRow(kind, id));
+  const pickFromDirectory = (kind: DirectoryGroup['kind'], id: string) => {
+    const nodeId = nodeIdForRow(kind, id);
+    if (onSelectNode && nodeId) return onSelectNode(nodeId);
+    setSelectedId(nodeId);
+  };
 
   const incident = useMemo(() => {
     if (!hoverId) return null;
@@ -222,7 +230,7 @@ export function NeuralGraph({
                   opacity={dimmed ? 0.15 : 1}
                   style={{ transition: 'opacity 300ms', cursor: 'pointer' }}
                   onMouseEnter={() => setHoverId(id)}
-                  onClick={() => setSelectedId((cur) => (cur === id ? null : id))}
+                  onClick={() => (onSelectNode ? onSelectNode(id) : setSelectedId((cur) => (cur === id ? null : id)))}
                 >
                   <title>{labelById.get(id) ?? id}</title>
                   <circle r={Math.max(8, r + 5)} fill="transparent" />
@@ -294,9 +302,11 @@ export function NeuralGraph({
 
       {/* the everything-index, same list as the graph view — hover a row to
           spotlight its neuron without clicking, click to open its detail */}
-      <div className="absolute bottom-3 right-3 top-16 z-[6] flex w-72 max-[820px]:hidden">
-        <GraphDirectory groups={directory} onPick={pickFromDirectory} onHover={hoverFromDirectory} className="h-full" />
-      </div>
+      {!hideDirectory && (
+        <div className="absolute bottom-3 right-3 top-16 z-[6] flex w-72 max-[820px]:hidden">
+          <GraphDirectory groups={directory} onPick={pickFromDirectory} onHover={hoverFromDirectory} className="h-full" />
+        </div>
+      )}
 
       {/* the same detail panels as the radial view, opened by clicking a
           neuron — absolute overlay so the network never reflows */}

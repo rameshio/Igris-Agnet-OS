@@ -12,8 +12,10 @@ const read = (p: string) => readFileSync(join(process.cwd(), p), 'utf8');
  * they are intentionally left eager.)
  */
 describe('code-splitting the heavy graphs', () => {
-  test('BrainGraphView loads KnowledgeGraph and NeuralGraph lazily, client-only', () => {
-    const src = read('components/BrainGraphView.tsx');
+  test('BrainWorkspace loads KnowledgeGraph and NeuralGraph lazily, client-only', () => {
+    // The consolidated G-Brain controller owns the lazy loading of the two heavy
+    // renderers (BrainGraphView was retired in the consolidation pass).
+    const src = read('components/BrainWorkspace.tsx');
     expect(src).toMatch(/dynamic\(\s*\(\)\s*=>\s*import\('@\/components\/KnowledgeGraph'\)/);
     expect(src).toMatch(/dynamic\(\s*\(\)\s*=>\s*import\('@\/components\/NeuralGraph'\)/);
     const ssrFalse = src.match(/ssr:\s*false/g) ?? [];
@@ -22,7 +24,7 @@ describe('code-splitting the heavy graphs', () => {
     // canvas keeps its 1200/640 viewBox aspect
     expect(src).toContain('h-[680px]');
     expect(src).toContain('1200 / 640');
-    // no eager imports remain
+    // no eager imports of the heavy renderers remain
     expect(src).not.toMatch(/import \{ KnowledgeGraph \}/);
     expect(src).not.toMatch(/import \{ NeuralGraph \}/);
   });

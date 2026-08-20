@@ -520,6 +520,42 @@ it never becomes canonical operational state.*
 - **Not built in F6** (deferred): Reliability Phase G, autonomous remediation, auto-agent creation,
   optional LLM narrative synthesis, a thresholds settings UI, any new telemetry/observability platform.
 
+### 6j. G-Brain consolidation — ONE brain + safe cleanup ✅
+
+F3–F5 added canonical knowledge + a structural/operational projection, but shipped them as a SECOND
+`[Radial][Neural]` SVG workspace ABOVE the original attractive `[Radial][Neural]` org constellation —
+a confusing duplicate, and the new Radial was **blank** on a bare `/brain`. Consolidation collapses
+this into **ONE brain**.
+
+- **The original renderers are the shell; canonical data is the source.** `KnowledgeGraph` (radial)
+  and `NeuralGraph` (neural) — both consume the legacy `KGData` ring model — are kept and now fed
+  CANONICAL company data through an adapter. The plain F4/F5 SVG renderers (`BrainRadial`, `BrainNeural`)
+  and the duplicate `BrainGraphView` are RETIRED.
+- **Adapter** (`lib/brain/company-brain-graph.ts`): `buildStructuralBrainGraph` projects
+  company → missions → tasks → agents → artifacts/knowledge/workflows into `KGData` (self/team/task/
+  employee/tool rings) — a **bounded company-wide overview by default** (never blank), with a focused
+  subtree when `?entity=` is set. `buildOperationalBrainGraph` remaps the read-only F5 projection
+  (over `company_events`) into `KGData` for the neural view. `lib/brain/kg-ids.ts` encodes each node id
+  (`team:`/`task:`/`emp:`/`tool:artifact:`…) so `inspectTargetForKgId` reverses a click to a canonical
+  Inspector target. **Projection, not persistence:** a drawn node is never a `brain_entities` row.
+- **Controller** (`components/BrainWorkspace.tsx`): owns the single `[Radial][Neural]` tab, fetches the
+  canonical graph (`GET /api/brain/company-graph?entity=&mode=structural|operational&window=`), threads
+  clicks into the ONE Universal Inspector, runs F3 search, honours `?entity=` as a FOCUS on the same
+  brain, and polls the operational view ~5s. It drives the legacy renderers via additive, optional
+  props (`onSelectNode` / `focusNodeId` / `hideDirectory`) — their standalone behavior is unchanged
+  when the props are absent. The heavy renderers still load via `next/dynamic` (ssr:false).
+- **Four projections of one company:** Activity (U4) = chronological · Radial = structural ·
+  Neural = operational · Intelligence (F6) = analytical.
+- **Safe test-data cleanup** (`lib/company/cleanup/service.ts`, `/api/missions/:id/{cleanup-preview,
+  archive,delete}`, surfaced in `MissionsBoard`): **archive** sets the terminal `archived` status
+  (direct write, hidden from the default view, keeps everything — provenance intact); **delete-test**
+  is scoped to ONE mission, U3 previewed, requires `{confirm:true}`, cascades only mission-OWNED rows
+  (tasks/deps/artifacts/events/proposals), RETIRES (never hard-deletes) temporary mission-bound agents,
+  and NEVER touches shared agents, reusable workflows, or durable promoted knowledge. **No global wipe.**
+- **Not changed:** the F3 canonical DB, explicit-only artifact→knowledge promotion (drawing never
+  auto-ingests), the F4/F5 projection SERVICES (reused by the adapter + inspect), and the external
+  gbrain-store viz (`BrainCore`/`BrainViz`) which stays below as brain-store status.
+
 ---
 
 ## 7. Model architecture
