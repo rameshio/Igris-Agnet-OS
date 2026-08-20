@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-F5**
+Phase: Architecture V2 · F5 (G-Brain Neural)
+Summary: The Neural tab becomes a read-only live/recent OPERATIONAL graph — missions → tasks → agents → workflow runs → approvals → artifacts — projected over the `company_events` ledger and reconciled with current canonical state, over a bounded time window with ~5s polling. Radial = structural · Neural = operational · Activity (U4) = chronological.
+Reason: F4 shipped Neural as a placeholder. F5 answers "what is happening through these connections right now?" while strictly keeping Neural a projection (never a runtime, never a second event store) and current canonical state the authority for status.
+Files added: `lib/brain/neural/model.ts` (pure enums/window/bounds/event→edge map/status mappers), `lib/brain/neural/service.ts` (`getNeuralGraph`); `app/api/brain/neural/route.ts`; `components/BrainNeural.tsx`; `tests/brain-neural.test.ts`.
+Files modified: `lib/db.ts` (additive `companyEvents` reads `recent`/`since`/`forAgent`/`get` — NO new table), `lib/brain/inspector/{model,service}.ts` (+ safe `workflow_run` + `event` kinds), `components/BrainWorkspace.tsx` (Neural wiring: window selector + no-overlap polling paused off-tab + shared selection), `tests/{brain-inspector,smoke-api}.test.ts`, docs.
+Database: NONE — F5 is read-only projection over existing tables (added `company_events` read methods only). No schema change.
+API: `GET /api/brain/neural?entity=<ref|id>&window=15m|1h|6h|24h&limit=`. Read-only; no mutation endpoint.
+Behavior: the `/brain` Neural tab renders the operational flow graph (deterministic left-to-right by kind; status colors; relative age; only genuinely-active nodes pulse), polls ~5s while active (no-overlap, stops off-tab/on-unmount, "as of {generatedAt}"), honors a window selector, and shares selection + the Universal Inspector (now covering `workflow_run` + `event`) with Radial. Company-now view when no root; honest empty state.
+Tests added: 10 neural (mission→task/task→agent/artifact/workflow_run/approval edges, factory events, **current-status-overrides-stale-event**, bounds/truncation, focus + company-now + malformed-reject, dedup, **no-mutation**, startingInput/context_json privacy) + 2 inspector (workflow_run/event safe).
+Tests run: `tsc --noEmit` (clean); vitest brain + smoke suites; full suite.
+Results: pass (typecheck clean; 12 new tests green; full suite 1573).
+Known limits: approval nodes resolve via the task's workflow run; layered-by-kind layout (no force physics); factory chain only if events exist; polling (no push/WebSockets). No analytics (F6).
+Rollback: code rollback removes the neural service/route/UI + the two inspector kinds; the additive `company_events` read methods are inert if unused. Nothing persisted to reverse (read-only).
+
+---
+
 Change ID: **V2-F4**
 Phase: Architecture V2 · F4 (G-Brain Radial + Universal Inspector)
 Summary: An interactive structural view over the canonical F3 knowledge layer — a Radial graph centered on a selected entity + a Universal Inspector resolving any canonical object into a safe typed view. Radial is a PROJECTION (reads/resolves canonical state); it never persists, and projected edges are never written back to G-Brain.

@@ -1090,6 +1090,23 @@ export function openDb(path: string) {
       const row = db.prepare('SELECT COUNT(*) AS n FROM company_events WHERE task_id = ? AND type = ?').get(taskId, type) as { n: number };
       return row.n;
     },
+    /** One event by id (F5 Neural inspector). */
+    get(id: string): CompanyEvent | null {
+      const r = db.prepare('SELECT * FROM company_events WHERE id = ?').get(id) as CompanyEventRow | undefined;
+      return r ? rowToEvent(r) : null;
+    },
+    /** Newest-first, bounded (F5 Neural company-now projection). */
+    recent(limit = 200): CompanyEvent[] {
+      return db.prepare('SELECT * FROM company_events ORDER BY created_at DESC, id DESC LIMIT ?').all(limit).map((r) => rowToEvent(r as CompanyEventRow));
+    },
+    /** Events at/after an ISO timestamp, newest-first, bounded (F5 Neural time window). */
+    since(sinceIso: string, limit = 250): CompanyEvent[] {
+      return db.prepare('SELECT * FROM company_events WHERE created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?').all(sinceIso, limit).map((r) => rowToEvent(r as CompanyEventRow));
+    },
+    /** Events referencing an agent, newest-first, bounded (F5 Neural agent focus). */
+    forAgent(agentId: string, limit = 200): CompanyEvent[] {
+      return db.prepare('SELECT * FROM company_events WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?').all(agentId, limit).map((r) => rowToEvent(r as CompanyEventRow));
+    },
   };
 
   type CompanyTaskDepRow = { task_id: string; depends_on_task_id: string; created_at: string };

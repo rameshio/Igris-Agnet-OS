@@ -41,6 +41,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'brain/sources', load: () => import('@/app/api/brain/sources/route'), url: 'http://localhost/api/brain/sources' },
   { route: 'brain/search', load: () => import('@/app/api/brain/search/route'), url: 'http://localhost/api/brain/search?q=test' },
   { route: 'brain/radial', load: () => import('@/app/api/brain/radial/route'), url: 'http://localhost/api/brain/radial' },
+  { route: 'brain/neural', load: () => import('@/app/api/brain/neural/route'), url: 'http://localhost/api/brain/neural' },
   { route: 'comms', load: () => import('@/app/api/comms/route'), url: 'http://localhost/api/comms' },
   { route: 'conductor/context', load: () => import('@/app/api/conductor/context/route'), url: 'http://localhost/api/conductor/context?path=/agents' },
   { route: 'connections', load: () => import('@/app/api/connections/route'), url: 'http://localhost/api/connections' },

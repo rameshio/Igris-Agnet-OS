@@ -441,6 +441,47 @@ view with actions that route to existing systems.
 
 ---
 
+### 6h. G-Brain Neural (Architecture V2 · F5) ✅
+
+Radial answers *"what is connected to this?"*; **Neural answers *"what is happening through
+these connections right now?"*** — a **read-only projection of live/recent OPERATIONAL state**
+(missions → tasks → agents → workflow runs → approvals → artifacts) over a bounded time window.
+
+**Three projections, one workspace:** **Radial** = structural · **Neural** = operational ·
+**Activity (U4)** = chronological. They share sources; none replaces another.
+
+- **Neural is a projection over execution state, not a runtime.** It does NOT orchestrate,
+  dispatch, mutate canonical state, replace `company_events` / flow runs / agent runs / Phase E,
+  or create a second event store. **`company_events` is the primary ledger** (it supplies the
+  historical edge + timestamp); **current canonical state is authority for STATUS** (`task.status`,
+  `mission.status`, `flow_run.status`, `approval.status`, presence) — status is NEVER reconstructed
+  from stale event replay.
+- **Service** (`lib/brain/neural/{model,service}.ts`): `getNeuralGraph(db, { entity?, window?, limit? })`
+  — resolve the window (default 60 min; 15m/1h/6h/24h), load BOUNDED events (`companyEvents.since`/
+  `recent`), build nodes/edges from event refs via the pure `projectionForEvent` map, **reconcile
+  each node's status/active from current canonical state**, dedupe, and enforce caps (≤ 250 events /
+  150 nodes / 300 edges, `truncated` flag). Root/focus filters events to the selected entity; no root
+  → bounded "company now". Read-only; reuses F4 `parseEntityRef`.
+- **Node kinds:** mission/task/agent/workflow/workflow_run/approval/artifact/event. **Edge types
+  (closed):** has_task/assigned_to/delegated_to/executed_by/ran_workflow/requested_approval/produced/
+  handoff. Factory lifecycle events (CAPABILITY_GAP / AGENT_PROPOSED / AGENT_PROMOTED) appear only when
+  the events exist; Neural triggers no Factory action.
+- **UI:** `BrainNeural` (deterministic left-to-right flow SVG, pan/zoom/fit, status colors, relative
+  age; only genuinely `active` nodes pulse — history is static) replaces the F4 placeholder in
+  `BrainWorkspace`. A **window selector** + **~5s polling** (no-overlap guard, paused unless the
+  Neural tab is active, stopped on unmount, honest "as of {generatedAt}", never stale-as-live).
+  **Shared selection** across Radial↔Neural; the Universal Inspector gains safe read-only
+  `workflow_run` (workflow/version/status/started — never startingInput/outputs/tool args) and `event`
+  (type/time/summary/refs) kinds. **APIs:** `GET /api/brain/neural?entity=&window=&limit=` (read-only,
+  no mutation endpoint).
+- **Boundaries:** Radial is unchanged (**no `company_events` projected into Radial**); Neural writes
+  **nothing** to G-Brain knowledge (**no `event → BrainKnowledge`**); no WebSockets (polling only).
+- **Not built in F5** (deferred): F6 analytics (utilization/success-rate/throughput/bottleneck/cost/
+  recommendations), new event store, new workflow/approval engine, autonomous or graph-controlled
+  orchestration, G-Brain auto-ingestion, Neo4j, Temporal, WebSockets. See `docs/CHANGE-LOG.md` V2-F5 record.
+
+---
+
 ## 7. Model architecture
 
 Agents are never bound to one provider. An agent carries a **strategy**; a router resolves it

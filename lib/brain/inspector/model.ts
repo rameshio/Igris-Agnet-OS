@@ -7,7 +7,7 @@
  * never a generic mutation, never an LLM-generated URL. Views carry safe fields only.
  */
 
-export const INSPECTOR_KINDS = ['agent', 'mission', 'task', 'artifact', 'knowledge', 'workflow', 'source', 'approval'] as const;
+export const INSPECTOR_KINDS = ['agent', 'mission', 'task', 'artifact', 'knowledge', 'workflow', 'source', 'approval', 'workflow_run', 'event'] as const;
 export type InspectorKind = (typeof INSPECTOR_KINDS)[number];
 
 export type InspectorRow = { label: string; value: string };

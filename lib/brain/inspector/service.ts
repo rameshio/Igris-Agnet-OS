@@ -128,6 +128,38 @@ export function inspectEntity(db: FounderDb, input: { kind: string; id: string }
       return { entity: { id: `approval:${id}`, kind: 'approval', label: `Approval ${id.slice(0, 8)}`, status: ap.status }, sections,
         actions: [{ id: 'open_approvals', kind: 'navigate', label: 'Open in Approvals', href: '/approvals' }] };
     }
+    case 'workflow_run': {
+      const run = db.flowRuns.get(id);
+      if (!run) throw new BrainError('workflow run not found', 404);
+      const wf = db.flowWorkflows.get(run.workflowId);
+      const sections: InspectorSection[] = [
+        // safe fields only — NEVER startingInput, node outputs, tool args, or secrets
+        { title: 'Overview', rows: [
+          { label: 'Workflow', value: wf?.name ?? run.workflowId },
+          { label: 'Version', value: `v${run.workflowVersion}` },
+          { label: 'Status', value: run.status },
+          ...(run.startedAt ? [{ label: 'Started', value: run.startedAt }] : []),
+        ] },
+      ];
+      return { entity: { id: `workflow_run:${id}`, kind: 'workflow_run', label: `${wf?.name ?? 'workflow'} · run`, status: run.status }, sections,
+        actions: [{ id: 'open_flows', kind: 'navigate', label: 'Open in Flows', href: '/flows' }] };
+    }
+    case 'event': {
+      const ev = db.companyEvents.get(id);
+      if (!ev) throw new BrainError('event not found', 404);
+      const sections: InspectorSection[] = [
+        // type + time + safe summary + linked refs only — never raw metadata blindly
+        { title: 'Overview', rows: [{ label: 'Type', value: ev.type }, { label: 'When', value: ev.createdAt }, { label: 'Summary', value: ev.summary }] },
+        { title: 'Links', rows: [
+          ...(ev.missionId ? [{ label: 'Mission', value: ev.missionId }] : []),
+          ...(ev.taskId ? [{ label: 'Task', value: ev.taskId }] : []),
+          ...(ev.agentId ? [{ label: 'Agent', value: ev.agentId }] : []),
+          ...(ev.artifactId ? [{ label: 'Artifact', value: ev.artifactId }] : []),
+        ] },
+      ];
+      const actions: InspectorAction[] = ev.missionId ? [{ id: 'open_mission', kind: 'navigate', label: 'Open in Missions', href: '/missions' }] : [];
+      return { entity: { id: `event:${id}`, kind: 'event', label: ev.type.replace(/_/g, ' ').toLowerCase() }, sections, actions };
+    }
     default:
       throw new BrainError(`unknown inspector kind: ${input.kind}`, 400);
   }

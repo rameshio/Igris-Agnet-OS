@@ -13,6 +13,7 @@ import { createCustomAgent } from '@/lib/agents/custom';
 import { createMission, createCompanyTask, assignTask } from '@/lib/company/service';
 import { createArtifact } from '@/lib/company/manager/artifacts';
 import { promoteArtifactToBrain } from '@/lib/brain/core/promote';
+import { appendEvent } from '@/lib/company/manager/events';
 import { inspectEntity } from '@/lib/brain/inspector/service';
 import { INSPECTOR_ACTION_IDS, type InspectorView } from '@/lib/brain/inspector/model';
 
@@ -28,6 +29,29 @@ function publishWorkflow(db: DB, id: string) {
   db.flowVersions.create({ id: `${id}-v1`, workflowId: id, version: 1, graph: g });
   db.flowWorkflows.setCurrentVersion(id, 1);
 }
+
+describe('inspectEntity — F5 Neural kinds', () => {
+  it('workflow_run resolves safe fields only (never startingInput / outputs)', () => {
+    const db = openDb(':memory:');
+    publishWorkflow(db, 'wf-1');
+    db.flowRuns.create({ id: 'run-1', workflowId: 'wf-1', workflowVersion: 1, startingInput: { text: 'SECRET INPUT' } });
+    const v = inspectEntity(db, { kind: 'workflow_run', id: 'run-1' });
+    expect(v.entity.kind).toBe('workflow_run');
+    expect(JSON.stringify(v)).not.toMatch(/SECRET INPUT|startingInput/);
+    expect(v.actions).toEqual([{ id: 'open_flows', kind: 'navigate', label: 'Open in Flows', href: '/flows' }]);
+  });
+
+  it('event resolves type/time/summary/refs safely', () => {
+    const db = openDb(':memory:');
+    const m = createMission(db, { title: 'M' });
+    const t = createCompanyTask(db, m.id, { title: 'T' });
+    const ev = appendEvent(db, { type: 'CAPABILITY_GAP', missionId: m.id, taskId: t.id, summary: 'Capability gap: research.web' })!;
+    const v = inspectEntity(db, { kind: 'event', id: ev.id });
+    expect(v.entity.kind).toBe('event');
+    expect(v.sections.find((s) => s.title === 'Overview')?.rows.some((r) => r.label === 'Type')).toBe(true);
+    expect(v.sections.find((s) => s.title === 'Links')?.rows.some((r) => r.value === t.id)).toBe(true);
+  });
+});
 
 /** Every action id used anywhere in a view must be in the closed allow-list. */
 const actionsAreClosed = (v: InspectorView) => v.actions.every((a) => (INSPECTOR_ACTION_IDS as readonly string[]).includes(a.id));

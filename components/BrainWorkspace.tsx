@@ -1,25 +1,30 @@
 'use client';
 
 /**
- * G-Brain workspace (Architecture V2 · F4) — the [Radial][Neural] tabbed structural view
- * over the canonical G-Brain. Radial is active (F4): search/deep-link to a root, click nodes
- * to inspect via the Universal Inspector, double-click to focus (re-root). Neural is an
- * honest F5 placeholder — selection is preserved across the switch so F5 can reuse it.
+ * G-Brain workspace (Architecture V2 · F4 + F5) — the [Radial][Neural] tabbed view over the
+ * canonical G-Brain. Radial (F4) = STRUCTURAL: search/deep-link to a root, click to inspect,
+ * double-click to focus (re-root). Neural (F5) = OPERATIONAL: a bounded, polled projection of
+ * live/recent execution over a time window. Both share the selection + Universal Inspector;
+ * Activity (U4) remains the chronological list.
  *
  * Deep-link: `/brain?entity=<kind:id|bent-…>`. The initial render is deterministic (empty);
  * the URL is read in a mount effect (SSR/hydration-safe, per U1/U6). React never touches
  * SQLite; every read is a bounded API call, and mutating actions route to existing endpoints.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { RadialGraph } from '@/lib/brain/projection/model';
+import type { NeuralGraph } from '@/lib/brain/neural/model';
 import type { InspectorAction, InspectorView } from '@/lib/brain/inspector/model';
 import type { BrainSearchHit } from '@/lib/brain/core/search';
 import { BrainRadial } from '@/components/BrainRadial';
+import { BrainNeural } from '@/components/BrainNeural';
 import { UniversalInspector } from '@/components/UniversalInspector';
 import { SectionHead } from '@/components/terminal';
 
-const INSPECTABLE = new Set(['agent', 'mission', 'company_task', 'artifact', 'knowledge', 'workflow', 'source', 'approval']);
+const INSPECTABLE = new Set(['agent', 'mission', 'company_task', 'artifact', 'knowledge', 'workflow', 'source', 'approval', 'workflow_run', 'event']);
+const NEURAL_POLL_MS = 5000;
+const NEURAL_WINDOW_OPTIONS = ['15m', '1h', '6h', '24h'] as const;
 
 /** A radial node id is `keyKind:id`; map it to an Inspector {kind,id} (company_task → task). */
 function inspectTarget(nodeId: string): { kind: string; id: string } | null {
@@ -53,6 +58,12 @@ export function BrainWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<BrainSearchHit[] | null>(null);
+  // Neural (F5) — operational projection, polled while the Neural tab is active.
+  const [neural, setNeural] = useState<NeuralGraph | null>(null);
+  const [neuralLoading, setNeuralLoading] = useState(false);
+  const [neuralError, setNeuralError] = useState<string | null>(null);
+  const [neuralWindow, setNeuralWindow] = useState<string>('1h');
+  const neuralInFlight = useRef(false);
 
   const loadRadial = useCallback(async (entity: string) => {
     setGraphLoading(true);
@@ -102,6 +113,37 @@ export function BrainWorkspace() {
     const res = await getJson<{ results: BrainSearchHit[] }>(`/api/brain/search?q=${encodeURIComponent(query.trim())}`);
     setHits(res?.results ?? []);
   };
+
+  // Neural loader with a no-overlap guard (never issues a second request while one is pending).
+  const loadNeural = useCallback(async () => {
+    if (neuralInFlight.current) return;
+    neuralInFlight.current = true;
+    setNeuralLoading(true);
+    try {
+      const params = new URLSearchParams({ window: neuralWindow });
+      if (root) params.set('entity', root);
+      const res = await fetch(`/api/brain/neural?${params.toString()}`);
+      if (res.ok) {
+        setNeural((await res.json()) as NeuralGraph);
+        setNeuralError(null);
+      } else {
+        setNeuralError('Neural projection unavailable');
+      }
+    } catch {
+      setNeuralError('Neural projection unavailable');
+    } finally {
+      setNeuralLoading(false);
+      neuralInFlight.current = false;
+    }
+  }, [neuralWindow, root]);
+
+  // Poll ONLY while the Neural tab is active; stop on unmount / tab switch / window change.
+  useEffect(() => {
+    if (tab !== 'neural') return;
+    void loadNeural();
+    const id = setInterval(() => void loadNeural(), NEURAL_POLL_MS);
+    return () => clearInterval(id);
+  }, [tab, loadNeural]);
 
   const runAction = async (action: InspectorAction) => {
     if (action.kind === 'navigate') {
@@ -173,12 +215,21 @@ export function BrainWorkspace() {
           <UniversalInspector view={view} loading={viewLoading} busy={busy} onAction={runAction} />
         </div>
       ) : (
-        <div className="flex items-center justify-center rounded-sm-t border border-dashed border-os-border bg-os-bg" style={{ height: 320 }}>
-          <div className="text-center">
-            <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-os-dim">Neural — operational graph</div>
-            <p className="mt-2 max-w-md font-mono text-[10px] text-os-dim">F5 (live execution flow / company events) is not implemented yet. Company events remain the operational ledger; they are not piped into the brain. Your selection is preserved here for when Neural lands.</p>
-            {selectedId && <p className="mt-2 font-mono text-[9.5px] text-os-muted">selected: {selectedId}</p>}
+        <div className="flex flex-col gap-4 lg:flex-row">
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex items-center gap-1">
+              <span className="mr-1 font-mono text-[9px] uppercase tracking-[0.2em] text-os-dim">window</span>
+              {NEURAL_WINDOW_OPTIONS.map((w) => (
+                <button key={w} onClick={() => setNeuralWindow(w)} aria-pressed={neuralWindow === w} className={`rounded-sm-t border px-2 py-0.5 font-mono text-[9.5px] ${neuralWindow === w ? 'border-os-accent text-os-accent' : 'border-os-border text-os-dim hover:text-os-muted'}`}>
+                  {w}
+                </button>
+              ))}
+              {root && <span className="ml-2 truncate font-mono text-[9px] text-os-dim">focus: {root}</span>}
+            </div>
+            <BrainNeural graph={neural} loading={neuralLoading} error={neuralError} selectedId={selectedId} onSelect={(id) => void selectNode(id)} />
+            <p className="mt-1 font-mono text-[9px] text-os-dim">Operational projection over company_events + current canonical state · read-only · Activity (U4) is the chronological list.</p>
           </div>
+          <UniversalInspector view={view} loading={viewLoading} busy={busy} onAction={runAction} />
         </div>
       )}
     </section>
