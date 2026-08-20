@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-F4**
+Phase: Architecture V2 · F4 (G-Brain Radial + Universal Inspector)
+Summary: An interactive structural view over the canonical F3 knowledge layer — a Radial graph centered on a selected entity + a Universal Inspector resolving any canonical object into a safe typed view. Radial is a PROJECTION (reads/resolves canonical state); it never persists, and projected edges are never written back to G-Brain.
+Reason: F3 gave the company canonical knowledge but only a list/search UI. F4 answers "what is connected to this thing?" and makes G-Brain an operating view, while strictly preserving projection ≠ persistence and Inspector-as-control-surface-not-authority.
+Files added: `lib/brain/projection/{model,radial}.ts` (bounded projection + strict deep-link parser), `lib/brain/inspector/{model,service}.ts` (typed per-kind views + closed actions); `app/api/brain/{radial,inspect}/route.ts`; `components/{BrainWorkspace,BrainRadial,UniversalInspector}.tsx`; `tests/brain-projection.test.ts`, `tests/brain-inspector.test.ts`.
+Files modified: `app/brain/page.tsx` (mount `BrainWorkspace` above the unchanged org constellation), `components/MissionsBoard.tsx` ("View in G-Brain" deep-link), `tests/smoke-api.test.ts`, docs.
+Database: NONE — F4 is read-only projection + inspection over existing tables. No schema change.
+API: `GET /api/brain/radial?entity=<ref|id>&depth=&limit=`, `GET /api/brain/inspect?kind=&id=`. No mutation endpoint; Inspector mutations reuse existing APIs.
+Behavior: `/brain` gains a `[Radial][Neural]` workspace above the org/life constellation. Radial (active) centers on a searched/deep-linked entity, click-to-inspect via the Universal Inspector, double-click to focus (re-root); Neural is an honest F5 placeholder (no `company_events` piped in). `/missions` gains a "View in G-Brain" link. Deep-link `/brain?entity=kind:id`; selection preserved across the tab switch. Persisted edges draw solid, projected dashed.
+Tests added: 11 projection (projected mission→task/task→artifact/agent/dep/capability edges, persisted knowledge edge, dedup, node/depth caps, **no auto-persistence**, safe fields, strict `parseEntityRef`) + 9 inspector (each kind resolves; unknown rejected; no secrets/prompts/model; closed action ids; privileged actions are navigate, only safe promote/archive are inline api).
+Tests run: `tsc --noEmit` (clean); vitest brain + smoke-api suites; full suite.
+Results: pass (typecheck clean; 20 F4 tests green; full suite 1560).
+Known limits: re-root ("focus") on double-click rather than in-place expansion; SVG radial (no d3-force physics/minimap); Neural is a placeholder (F5); no analytics (F6). No new deps; no DB change.
+Rollback: code rollback removes the projection/inspector services + routes + UI; nothing persisted to reverse (F4 is read-only).
+
+---
+
 Change ID: **V2-F3**
 Phase: Architecture V2 · F3 (G-Brain Core)
 Summary: The canonical, durable, in-app company knowledge layer — Entities, Relationships, Knowledge, and Sources/provenance in SQLite. G-Brain REFERENCES the other canonical systems (never copies their mutable state) and ingests ONLY on explicit action. The four graphs (organization/workflow/knowledge/execution) stay separate.

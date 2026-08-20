@@ -40,6 +40,7 @@ const ROUTES: RouteEntry[] = [
   { route: 'brain/knowledge', load: () => import('@/app/api/brain/knowledge/route'), url: 'http://localhost/api/brain/knowledge' },
   { route: 'brain/sources', load: () => import('@/app/api/brain/sources/route'), url: 'http://localhost/api/brain/sources' },
   { route: 'brain/search', load: () => import('@/app/api/brain/search/route'), url: 'http://localhost/api/brain/search?q=test' },
+  { route: 'brain/radial', load: () => import('@/app/api/brain/radial/route'), url: 'http://localhost/api/brain/radial' },
   { route: 'comms', load: () => import('@/app/api/comms/route'), url: 'http://localhost/api/comms' },
   { route: 'conductor/context', load: () => import('@/app/api/conductor/context/route'), url: 'http://localhost/api/conductor/context?path=/agents' },
   { route: 'connections', load: () => import('@/app/api/connections/route'), url: 'http://localhost/api/connections' },
@@ -105,7 +106,8 @@ describe('platform smoke — every GET API route answers 200 with JSON', () => {
     // company mission/task GETs 404 without real ids — covered by tests/company-service.test.ts.
     // missions/[id]/report + company-artifacts/[id] GET 404 without real ids — covered by tests/company-manager*.test.ts.
     // brain entity/knowledge single-item GETs 404 without a real id — covered by tests/brain-core-*.test.ts.
-    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime', 'agents/[id]/capabilities', 'missions/[id]', 'missions/[id]/tasks', 'company-tasks/[id]', 'company-tasks/[id]/eligible-agents', 'missions/[id]/report', 'company-artifacts/[id]', 'brain/entities/[id]', 'brain/entities/[id]/relationships', 'brain/knowledge/[id]']);
+    // brain/inspect needs a real kind+id (404 otherwise) — covered by tests/brain-inspector.test.ts.
+    const IGNORE = new Set(['skills/[slug]', 'flows/[id]', 'flows/[id]/versions', 'flows/[id]/runs', 'flows/runs/[runId]', 'flow-approvals/[id]', 'settings/hermes-runtime', 'agents/[id]/capabilities', 'missions/[id]', 'missions/[id]/tasks', 'company-tasks/[id]', 'company-tasks/[id]/eligible-agents', 'missions/[id]/report', 'company-artifacts/[id]', 'brain/entities/[id]', 'brain/entities/[id]/relationships', 'brain/knowledge/[id]', 'brain/inspect']);
     const discovered = discoverGetRoutes(path.join(process.cwd(), 'app', 'api')).filter((r) => !IGNORE.has(r)).sort();
     const covered = ROUTES.map((r) => r.route).sort();
     expect(covered).toEqual(discovered);

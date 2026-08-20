@@ -14,6 +14,7 @@ import { pillarRadarAxes } from '@/lib/pillar-radar';
 import { BrainGraphView } from '@/components/BrainGraphView';
 import { BrainDump } from '@/components/BrainDump';
 import { BrainCorePanel } from '@/components/BrainCorePanel';
+import { BrainWorkspace } from '@/components/BrainWorkspace';
 import { Dot, SectionHead } from '@/components/terminal';
 
 export const dynamic = 'force-dynamic';
@@ -202,6 +203,12 @@ export default async function BrainPage() {
         rightWide
         right={<BrainDump compact />}
       />
+
+      {/* Architecture V2 · F4 — canonical structural view (Radial + Universal Inspector).
+          Distinct from the org/life constellation below (which stays untouched). */}
+      <div className="mt-5">
+        <BrainWorkspace />
+      </div>
 
       <section className="mt-5">
         <SectionHead label="Knowledge graph" count={`${knowledgeGraph.nodes.length} nodes`} />

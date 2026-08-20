@@ -218,9 +218,12 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
           <div>
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-[16px] font-bold text-os-text">{selected.title}</h2>
-              <select value={selected.status} onChange={(e) => setMissionStatus(e.target.value)} className="shrink-0 rounded border border-os-border bg-os-bg px-2 py-1 font-mono text-[10px] uppercase text-os-muted">
-                {['draft', 'active', 'blocked', 'completed', 'failed', 'cancelled'].map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <div className="flex shrink-0 items-center gap-2">
+                <a href={`/brain?entity=mission:${selected.id}`} className="rounded border border-os-border px-2 py-1 font-mono text-[9.5px] uppercase text-os-dim hover:border-os-accent/50 hover:text-os-accent" title="View this mission's structure in G-Brain (F4)">View in G-Brain</a>
+                <select value={selected.status} onChange={(e) => setMissionStatus(e.target.value)} className="rounded border border-os-border bg-os-bg px-2 py-1 font-mono text-[10px] uppercase text-os-muted">
+                  {['draft', 'active', 'blocked', 'completed', 'failed', 'cancelled'].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
 
             {/* F1 Executive Manager controls + deterministic report strip */}

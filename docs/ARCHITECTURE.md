@@ -393,6 +393,54 @@ A future projection layer may combine them *visually*; the DB models stay distin
 
 ---
 
+### 6g. G-Brain Radial + Universal Inspector (Architecture V2 · F4) ✅
+
+F4 turns the canonical F3 knowledge layer into an **interactive structural operating view**
+answering *"what is connected to this thing?"*: a **Radial** graph centered on a selected
+entity + a **Universal Inspector** that resolves any canonical object into a safe, typed
+view with actions that route to existing systems.
+
+- **Radial is a PROJECTION, not a source of truth.** No second mutable graph DB. Canonical
+  state stays owned by its system; Radial *reads/resolves* them. **Projection node ≠ persisted
+  BrainEntity; projected edge ≠ persisted BrainRelationship** — `Mission HAS_TASK Task` is a
+  live PROJECTED edge (from Company Core, never written to `brain_relationships`), while
+  `Knowledge DERIVED_FROM Artifact` is a PERSISTED F3 edge. Each node/edge carries
+  `persisted: boolean` (Radial draws persisted solid, projected dashed). **Viewing a canonical
+  object NEVER auto-creates a BrainEntity.**
+- **Three projections, one workspace:** Radial = *structural* projection (F4, active) · Neural
+  = *operational* projection (F5, placeholder — `company_events` is NOT piped in) · Inspector
+  = canonical *control/read* surface. `/brain` gains a `[Radial][Neural]` workspace above the
+  unchanged org/life constellation (`BrainGraphView`) and F3 `BrainCorePanel`.
+- **Projection service** (`lib/brain/projection/{model,radial}.ts`): `getRadialNeighborhood(db,
+  { entity, depth, limit })` — bounded BFS (default depth 1, max 2; ≤ 100 nodes / 200 edges,
+  `truncated` flag) combining projected canonical edges (Mission→Task, Task→Agent/Artifact/dep/
+  capability, Artifact→Agent, Knowledge→Source, …) with persisted brain edges. `parseEntityRef`
+  is strict — a URL parameter can only address a typed `kind:id`/brain ref, never a query.
+  Read-only; never writes.
+- **Inspector service** (`lib/brain/inspector/{model,service}.ts`): `inspectEntity(db, { kind,
+  id })` → one typed `InspectorView` (sections + CLOSED actions) per kind (agent/mission/task/
+  artifact/knowledge/workflow/source/approval), resolving safe fields only — **never a system
+  prompt, model id, tool credential, or approval `context_json`.**
+- **Inspector is a control surface, not authority.** Actions are a closed, typed set:
+  `navigate` deep-links to the owning surface (`/missions`, `/approvals`, `/flows`, `/agents`) —
+  where the existing **U3 Plan→Preview→Execute / Phase-E** confirm already lives — for EVERY
+  privileged/execution/destructive action (approve/reject, dispatch, run, manager-step, retire).
+  The only inline `api` actions are the safe **Promote Artifact** (F3, idempotent) and **Archive
+  Knowledge** (reversible), each behind a confirm. F4 adds no second confirmation system and no
+  new authority.
+- **APIs** (bounded, read-only): `GET /api/brain/radial?entity=<ref|id>&depth=`, `GET
+  /api/brain/inspect?kind=&id=`. No mutation endpoint — Inspector mutations reuse existing APIs.
+  **UI:** `BrainWorkspace` + `BrainRadial` (deterministic SVG, pan/zoom/fit, no new deps) +
+  `UniversalInspector`; deep-link `/brain?entity=kind:id`; selection preserved across the tab
+  switch; a **View in G-Brain** link on `/missions`.
+- **Seams for later, not behavior:** F5 Neural is a placeholder (no live event flow); F6
+  analytics not started. Company events remain the operational ledger.
+- **Not built in F4** (deferred): F5 Neural / live event graph, F6 analytics, Neo4j, vector DB,
+  autonomous graph control, new approval/workflow engine, permission redesign, persisting
+  projected edges, auto-creating entities from browsing. See `docs/CHANGE-LOG.md` V2-F4 record.
+
+---
+
 ## 7. Model architecture
 
 Agents are never bound to one provider. An agent carries a **strategy**; a router resolves it
