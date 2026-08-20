@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-F3**
+Phase: Architecture V2 · F3 (G-Brain Core)
+Summary: The canonical, durable, in-app company knowledge layer — Entities, Relationships, Knowledge, and Sources/provenance in SQLite. G-Brain REFERENCES the other canonical systems (never copies their mutable state) and ingests ONLY on explicit action. The four graphs (organization/workflow/knowledge/execution) stay separate.
+Reason: Through F2 the company can plan/delegate/create agents but has no canonical knowledge layer with provenance. What existed under "G-Brain" was entirely external (gbrain CLI markdown store) or visualization-only (`/brain` force/vector graphs). F3 adds the missing durable in-app knowledge core without disturbing either.
+Files added: `lib/brain/core/{model,entities,relationships,knowledge,sources,search,promote,projection}.ts`; `app/api/brain/{entities/route,entities/[id]/route,entities/[id]/relationships/route,relationships/route,knowledge/route,knowledge/[id]/route,sources/route,search/route}.ts`; `app/api/company-artifacts/[id]/promote-to-brain/route.ts`; `components/BrainCorePanel.tsx`; `tests/brain-core-model.test.ts`, `tests/brain-core-service.test.ts`, `tests/brain-promote.test.ts`.
+Files modified: `lib/db.ts` (4 additive tables + repos), `app/brain/page.tsx` (mount `BrainCorePanel` below the existing viz), `components/MissionsBoard.tsx` (per-artifact Promote-to-G-Brain button), `tests/smoke-api.test.ts` (4 new GET routes), docs.
+Database: additive `brain_entities` (unique `canonical_key`) + `brain_relationships` (unique from+to+type) + `brain_knowledge` + `brain_sources` + 6 indexes (`CREATE TABLE IF NOT EXISTS`). No existing table/file changed; existing `/api/brain*` routes, the external gbrain store, and the /brain viz are all untouched.
+API: `GET/POST /api/brain/entities`, `GET /api/brain/entities/:id`, `GET /api/brain/entities/:id/relationships`, `POST /api/brain/relationships`, `GET/POST /api/brain/knowledge`, `GET/PATCH /api/brain/knowledge/:id`, `GET/POST /api/brain/sources`, `GET /api/brain/search`, `POST /api/company-artifacts/:id/promote-to-brain`. No generic mutate-anything endpoint.
+Behavior: `/brain` gains a Company-Knowledge panel (knowledge list + search + explicit create + entity list) below the unchanged visualization; `/missions` gains a per-artifact "Promote to G-Brain" button. Durable knowledge is created only by explicit action.
+Tests added: 16 pure-model + 16 service (entity canonical-ref validation/uniqueness, relationship endpoints/self-link/idempotency/safe metadata, knowledge provenance/nullable-confidence/safe projection, source resolution, bounded keyword search, separation from other canonical systems) + 5 promotion (source+knowledge+provenance, idempotent, artifact unchanged, no auto-ingest, safe projection).
+Tests run: `tsc --noEmit` (clean); vitest brain + smoke-api suites; full suite.
+Results: pass (typecheck clean; 37 brain tests green; full suite 1539).
+Known limits: keyword search only (no vector DB/Neo4j; the lexical `embedText` is an optional unused ranker); legacy markdown is an OPTIONAL import source (not auto-imported); knowledge lifecycle is `active`/`archived` (no hard-delete UI); no bulk import. F4 Radial/Universal Inspector, F5 Neural/live event flow, and F6 analytics NOT started.
+Rollback: code rollback removes the brain-core services/routes/UI; the additive `brain_*` tables are inert if unused. No data migration to reverse; no existing content touched.
+
+---
+
 Change ID: **V2-F2**
 Phase: Architecture V2 · F2 (Agent Factory)
 Summary: Controlled, human-gated dynamic agent creation that fills the F1 `CAPABILITY_GAP`. When no existing agent or published workflow can satisfy a task, the operator proposes an agent; an LLM proposes a spec, the server validates it against a factory policy, and the agent is CREATED only on human approval (promotion). Reuses `createCustomAgent` under a policy wrapper — no forked creation, no autonomous loop.

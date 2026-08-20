@@ -330,6 +330,69 @@ never forks it, and introduces no autonomous behavior.
 
 ---
 
+### 6f. G-Brain Core (Architecture V2 · F3) ✅
+
+The company gains a **canonical, durable, in-app knowledge layer** — Entities,
+Relationships, Knowledge, and Sources/provenance in SQLite. G-Brain is the company's
+second brain: it **references** the other canonical systems and never copies their
+mutable state, and it ingests **only on explicit action**.
+
+**The four graphs stay separate** (never merged into one DB model):
+
+```
+1. Organization graph → agent/company registry     (manager ↔ agent ↔ team)
+2. Workflow graph      → Flow engine                (React Flow definitions)
+3. Knowledge graph     → G-Brain Core (F3 owns)     (entities/relationships/knowledge/sources)
+4. Execution graph     → mission/task/run/event      (company core + ledger)
+```
+
+A future projection layer may combine them *visually*; the DB models stay distinct.
+
+- **Distinct from what already existed.** The EXTERNAL gbrain markdown store (`lib/brain.ts`
+  → `connectors/gbrain.ts`, written via `lib/brain-dump.ts` + the agent `saveToGBrain` tool)
+  and the `/brain` VISUALIZATION graphs (`lib/brain-graph.ts`, `knowledge-graph.ts`,
+  `memory-core.ts`, `brain-viz.ts`) are left fully working and untouched. F3's canonical
+  knowledge is a NEW in-app DB layer, separate from both.
+- **Service layer** (`lib/brain/core/*`): `model.ts` (pure — closed enums for entity/
+  relationship/knowledge/source types, `canonicalKey`, bounded safe metadata, safe
+  projections, `BrainError`), `entities.ts`, `relationships.ts`, `knowledge.ts`, `sources.ts`,
+  `search.ts`, `promote.ts`, `projection.ts`. React never touches SQLite; Zod at every boundary.
+- **Canonical references, never state copies.** A `BrainEntity` for an agent stores only
+  `canonicalRef = { kind:'agent', id }` + a safe name/summary — never the agent's tools/model/
+  status/permissions (resolved from the registry on read). At most ONE entity per canonical
+  ref (unique `canonical_key`); the ref is validated against its owning system on create.
+- **Explicit ingestion only.** Nothing auto-writes to canonical G-Brain — not LLM output, not
+  artifacts, not task results, not chat, not company events. There is **no agent write path**
+  to canonical G-Brain (the existing `saveToGBrain` tool writes the SEPARATE external store).
+- **Artifact → G-Brain promotion** (`promote.ts`): the one explicit seam. It creates a
+  `BrainSource(artifact)` + `BrainKnowledge` (provenance `sourceId` + `createdByAgentId`) and a
+  provenance graph by canonical ref (Knowledge ─DERIVED_FROM→ Artifact · Task/Agent ─PRODUCED→
+  Artifact · Mission ─HAS_TASK→ Task). **Idempotent** (one promotion per artifact); it **never
+  modifies the artifact** (canonical in Company Core) and **never auto-ingests** any other artifact.
+- **Provenance is mandatory + answerable:** Knowledge ← Artifact ← Agent ← Task ← Mission, all
+  by canonical reference. Sources never store credentials (a plain resource URL + labels only).
+- **Confidence is nullable and never fabricated.** Deletion is avoided; knowledge has an
+  `active`/`archived` lifecycle.
+- **Search** (`search.ts`): deterministic keyword search over entity name + knowledge title/
+  content + source title; bounded results. **No vector DB, no Neo4j.** The existing lexical
+  `embedText` remains available as an optional ranker; F3 does not depend on it.
+- **Memory layers stay separate:** working memory (mission/task exec context) · agent memory ·
+  **G-Brain Core (durable company knowledge)** · Hermes/runtime memory. **Hermes memory ≠ G-Brain.**
+- **APIs** (Zod, no generic mutate): `GET/POST /api/brain/entities`, `GET /api/brain/entities/:id`,
+  `GET /api/brain/entities/:id/relationships`, `POST /api/brain/relationships`,
+  `GET/POST /api/brain/knowledge`, `GET/PATCH /api/brain/knowledge/:id`, `GET/POST /api/brain/sources`,
+  `GET /api/brain/search`, `POST /api/company-artifacts/:id/promote-to-brain`. Existing
+  `/api/brain`, `/api/brain/graph`, `/api/brain/overview`, `/api/brain/dump` untouched. **UI:** a
+  `BrainCorePanel` on `/brain` below the existing viz + a per-artifact **Promote to G-Brain** button on `/missions`.
+- **Seams only (no F4/F5 behavior):** `getEntityNeighborhood` is the **F4 Radial** read seam;
+  `ProjectionSource` is the **F5 Neural** interface. Company events remain the operational ledger —
+  G-Brain references them only if explicitly promoted later.
+- **Not built in F3** (deferred): F4 Radial / Universal Inspector, F5 Neural / live event-flow,
+  F6 analytics, Neo4j, any vector DB, autonomous/automatic memory capture, automatic artifact
+  ingestion, Hermes-memory merge. See `docs/CHANGE-LOG.md` V2-F3 record.
+
+---
+
 ## 7. Model architecture
 
 Agents are never bound to one provider. An agent carries a **strategy**; a router resolves it
@@ -844,6 +907,7 @@ Activity stream — a dedicated agent-centric projection (cleaner than contortin
 | `company_missions` · `company_tasks` · `company_task_dependencies` | Canonical company-work layer (distinct from `agent_tasks`) | ✅ V2 F0.2 |
 | `company_artifacts` · `company_events` | First-class work products + append-only delegation ledger | ✅ V2 F1 |
 | `company_agent_proposals` | Human-gated Agent Factory proposals (spec + policy snapshot; agent created only on approval) | ✅ V2 F2 |
+| `brain_entities` · `brain_relationships` · `brain_knowledge` · `brain_sources` | Canonical G-Brain Core: knowledge + relationships + provenance, referencing (never copying) canonical objects | ✅ V2 F3 |
 
 (Plus the many operational/business tables: metrics, funnel, social, roadmap, skills, people, …)
 

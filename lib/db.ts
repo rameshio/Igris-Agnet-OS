@@ -12,6 +12,20 @@ import {
 import type { Mission, CompanyTask, CompanyTaskDependency } from '@/lib/company/model';
 import type { CompanyArtifact, CompanyEvent, CompanyEventType } from '@/lib/company/manager/model';
 import { DEFAULT_FACTORY_POLICY, type AgentProposal, type AgentSpec, type FactoryPolicy, type ProposalStatus } from '@/lib/company/factory/model';
+import {
+  canonicalKey,
+  type BrainEntity,
+  type BrainEntityType,
+  type BrainKnowledge,
+  type BrainRelationship,
+  type BrainRelationshipType,
+  type BrainSource,
+  type CanonicalRef,
+  type CanonicalRefKind,
+  type KnowledgeKind,
+  type KnowledgeStatus,
+  type SourceType,
+} from '@/lib/brain/core/model';
 import type {
   FlowRun,
   FlowNodeRun,
@@ -253,6 +267,62 @@ CREATE TABLE IF NOT EXISTS company_agent_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_company_agent_proposals_mission ON company_agent_proposals (mission_id);
 CREATE INDEX IF NOT EXISTS idx_company_agent_proposals_status ON company_agent_proposals (status);
+-- G-Brain Core (Architecture V2 · F3). The CANONICAL, durable, in-app knowledge layer:
+-- Entities + Relationships + Knowledge + Sources/provenance. DISTINCT from the external
+-- gbrain markdown store and the /brain visualization graphs. Additive; G-Brain REFERENCES
+-- canonical objects (agent/mission/task/workflow/artifact/…) via canonical_key, and NEVER
+-- copies their mutable state — cross-system refs are validated in the service, not by FK.
+CREATE TABLE IF NOT EXISTS brain_entities (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  summary TEXT,
+  canonical_key TEXT,          -- kind:id, UNIQUE when present (one entity per canonical ref)
+  canonical_ref_kind TEXT,
+  canonical_ref_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_brain_entities_canonical ON brain_entities (canonical_key);
+CREATE INDEX IF NOT EXISTS idx_brain_entities_type ON brain_entities (type);
+CREATE TABLE IF NOT EXISTS brain_relationships (
+  id TEXT PRIMARY KEY,
+  from_entity_id TEXT NOT NULL,
+  to_entity_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  strength REAL,
+  metadata_json TEXT,
+  source_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_brain_relationships_edge ON brain_relationships (from_entity_id, to_entity_id, type);
+CREATE INDEX IF NOT EXISTS idx_brain_relationships_from ON brain_relationships (from_entity_id);
+CREATE INDEX IF NOT EXISTS idx_brain_relationships_to ON brain_relationships (to_entity_id);
+CREATE TABLE IF NOT EXISTS brain_knowledge (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT,
+  kind TEXT NOT NULL DEFAULT 'note',
+  confidence REAL,             -- nullable; NEVER fabricated
+  source_id TEXT,
+  created_by_agent_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brain_knowledge_source ON brain_knowledge (source_id);
+CREATE TABLE IF NOT EXISTS brain_sources (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  title TEXT,
+  canonical_key TEXT,
+  canonical_ref_kind TEXT,
+  canonical_ref_id TEXT,
+  uri TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brain_sources_canonical ON brain_sources (canonical_key);
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -1115,6 +1185,143 @@ export function openDb(path: string) {
     /** Link the created agent onto an already-approved proposal (promotion step 2). */
     setAgent(id: string, agentId: string): void {
       db.prepare('UPDATE company_agent_proposals SET agent_id = ?, updated_at = ? WHERE id = ?').run(agentId, new Date().toISOString(), id);
+    },
+  };
+
+  // ── G-Brain Core (F3). Persistence only — validation/canonical-ref resolution live in
+  //    lib/brain/core/*. Cross-system refs are validated in the service, never by FK.
+  const refFromRow = (kind: string | null, id: string | null): CanonicalRef | undefined =>
+    kind && id ? { kind: kind as CanonicalRefKind, id } : undefined;
+
+  type BrainEntityRow = { id: string; type: string; name: string; summary: string | null; canonical_key: string | null; canonical_ref_kind: string | null; canonical_ref_id: string | null; created_at: string; updated_at: string };
+  const rowToBrainEntity = (r: BrainEntityRow): BrainEntity => ({
+    id: r.id,
+    type: r.type as BrainEntityType,
+    name: r.name,
+    summary: r.summary ?? undefined,
+    canonicalRef: refFromRow(r.canonical_ref_kind, r.canonical_ref_id),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  const brainEntities = {
+    all(): BrainEntity[] {
+      return db.prepare('SELECT * FROM brain_entities ORDER BY created_at DESC, id DESC').all().map((r) => rowToBrainEntity(r as BrainEntityRow));
+    },
+    list(type?: string): BrainEntity[] {
+      const rows = type
+        ? db.prepare('SELECT * FROM brain_entities WHERE type = ? ORDER BY created_at DESC, id DESC').all(type)
+        : db.prepare('SELECT * FROM brain_entities ORDER BY created_at DESC, id DESC').all();
+      return rows.map((r) => rowToBrainEntity(r as BrainEntityRow));
+    },
+    get(id: string): BrainEntity | null {
+      const r = db.prepare('SELECT * FROM brain_entities WHERE id = ?').get(id) as BrainEntityRow | undefined;
+      return r ? rowToBrainEntity(r) : null;
+    },
+    getByCanonicalKey(key: string): BrainEntity | null {
+      const r = db.prepare('SELECT * FROM brain_entities WHERE canonical_key = ?').get(key) as BrainEntityRow | undefined;
+      return r ? rowToBrainEntity(r) : null;
+    },
+    insert(e: BrainEntity): void {
+      const key = e.canonicalRef ? canonicalKey(e.canonicalRef.kind, e.canonicalRef.id) : null;
+      db.prepare(
+        'INSERT OR REPLACE INTO brain_entities (id, type, name, summary, canonical_key, canonical_ref_kind, canonical_ref_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(e.id, e.type, e.name, e.summary ?? null, key, e.canonicalRef?.kind ?? null, e.canonicalRef?.id ?? null, e.createdAt, e.updatedAt);
+    },
+  };
+
+  type BrainRelationshipRow = { id: string; from_entity_id: string; to_entity_id: string; type: string; strength: number | null; metadata_json: string | null; source_id: string | null; created_at: string };
+  const rowToBrainRelationship = (r: BrainRelationshipRow): BrainRelationship => ({
+    id: r.id,
+    fromEntityId: r.from_entity_id,
+    toEntityId: r.to_entity_id,
+    type: r.type as BrainRelationshipType,
+    strength: r.strength,
+    metadata: r.metadata_json === null ? undefined : parseJson<BrainRelationship['metadata']>(r.metadata_json, undefined),
+    sourceId: r.source_id ?? undefined,
+    createdAt: r.created_at,
+  });
+  const brainRelationships = {
+    all(): BrainRelationship[] {
+      return db.prepare('SELECT * FROM brain_relationships ORDER BY created_at DESC, id DESC').all().map((r) => rowToBrainRelationship(r as BrainRelationshipRow));
+    },
+    get(id: string): BrainRelationship | null {
+      const r = db.prepare('SELECT * FROM brain_relationships WHERE id = ?').get(id) as BrainRelationshipRow | undefined;
+      return r ? rowToBrainRelationship(r) : null;
+    },
+    /** Every relationship touching an entity, either direction. */
+    forEntity(entityId: string): BrainRelationship[] {
+      return db.prepare('SELECT * FROM brain_relationships WHERE from_entity_id = ? OR to_entity_id = ? ORDER BY created_at DESC, id DESC').all(entityId, entityId).map((r) => rowToBrainRelationship(r as BrainRelationshipRow));
+    },
+    /** An existing edge with the same (from, to, type), or null — the idempotency key. */
+    find(fromEntityId: string, toEntityId: string, type: string): BrainRelationship | null {
+      const r = db.prepare('SELECT * FROM brain_relationships WHERE from_entity_id = ? AND to_entity_id = ? AND type = ?').get(fromEntityId, toEntityId, type) as BrainRelationshipRow | undefined;
+      return r ? rowToBrainRelationship(r) : null;
+    },
+    insert(rel: BrainRelationship): void {
+      db.prepare(
+        'INSERT OR REPLACE INTO brain_relationships (id, from_entity_id, to_entity_id, type, strength, metadata_json, source_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(rel.id, rel.fromEntityId, rel.toEntityId, rel.type, rel.strength ?? null, rel.metadata === undefined ? null : JSON.stringify(rel.metadata), rel.sourceId ?? null, rel.createdAt);
+    },
+  };
+
+  type BrainKnowledgeRow = { id: string; title: string; content: string; summary: string | null; kind: string; confidence: number | null; source_id: string | null; created_by_agent_id: string | null; status: string; created_at: string; updated_at: string };
+  const rowToBrainKnowledge = (r: BrainKnowledgeRow): BrainKnowledge => ({
+    id: r.id,
+    title: r.title,
+    content: r.content,
+    summary: r.summary ?? undefined,
+    kind: r.kind as KnowledgeKind,
+    confidence: r.confidence,
+    sourceId: r.source_id ?? undefined,
+    createdByAgentId: r.created_by_agent_id ?? undefined,
+    status: r.status as KnowledgeStatus,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+  const brainKnowledge = {
+    all(): BrainKnowledge[] {
+      return db.prepare('SELECT * FROM brain_knowledge ORDER BY created_at DESC, id DESC').all().map((r) => rowToBrainKnowledge(r as BrainKnowledgeRow));
+    },
+    get(id: string): BrainKnowledge | null {
+      const r = db.prepare('SELECT * FROM brain_knowledge WHERE id = ?').get(id) as BrainKnowledgeRow | undefined;
+      return r ? rowToBrainKnowledge(r) : null;
+    },
+    bySource(sourceId: string): BrainKnowledge[] {
+      return db.prepare('SELECT * FROM brain_knowledge WHERE source_id = ? ORDER BY created_at, id').all(sourceId).map((r) => rowToBrainKnowledge(r as BrainKnowledgeRow));
+    },
+    insert(k: BrainKnowledge): void {
+      db.prepare(
+        'INSERT OR REPLACE INTO brain_knowledge (id, title, content, summary, kind, confidence, source_id, created_by_agent_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(k.id, k.title, k.content, k.summary ?? null, k.kind, k.confidence ?? null, k.sourceId ?? null, k.createdByAgentId ?? null, k.status, k.createdAt, k.updatedAt);
+    },
+  };
+
+  type BrainSourceRow = { id: string; type: string; title: string | null; canonical_key: string | null; canonical_ref_kind: string | null; canonical_ref_id: string | null; uri: string | null; created_at: string };
+  const rowToBrainSource = (r: BrainSourceRow): BrainSource => ({
+    id: r.id,
+    type: r.type as SourceType,
+    title: r.title ?? undefined,
+    canonicalRef: refFromRow(r.canonical_ref_kind, r.canonical_ref_id),
+    uri: r.uri ?? undefined,
+    createdAt: r.created_at,
+  });
+  const brainSources = {
+    all(): BrainSource[] {
+      return db.prepare('SELECT * FROM brain_sources ORDER BY created_at DESC, id DESC').all().map((r) => rowToBrainSource(r as BrainSourceRow));
+    },
+    get(id: string): BrainSource | null {
+      const r = db.prepare('SELECT * FROM brain_sources WHERE id = ?').get(id) as BrainSourceRow | undefined;
+      return r ? rowToBrainSource(r) : null;
+    },
+    getByCanonicalKey(key: string): BrainSource | null {
+      const r = db.prepare('SELECT * FROM brain_sources WHERE canonical_key = ?').get(key) as BrainSourceRow | undefined;
+      return r ? rowToBrainSource(r) : null;
+    },
+    insert(s: BrainSource): void {
+      const key = s.canonicalRef ? canonicalKey(s.canonicalRef.kind, s.canonicalRef.id) : null;
+      db.prepare(
+        'INSERT OR REPLACE INTO brain_sources (id, type, title, canonical_key, canonical_ref_kind, canonical_ref_id, uri, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(s.id, s.type, s.title ?? null, key, s.canonicalRef?.kind ?? null, s.canonicalRef?.id ?? null, s.uri ?? null, s.createdAt);
     },
   };
 
@@ -2522,6 +2729,10 @@ export function openDb(path: string) {
     companyArtifacts,
     companyEvents,
     companyAgentProposals,
+    brainEntities,
+    brainRelationships,
+    brainKnowledge,
+    brainSources,
     agentFlows,
     flowWorkflows,
     flowVersions,

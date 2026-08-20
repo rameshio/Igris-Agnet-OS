@@ -13,6 +13,7 @@ import { PillarRadar } from '@/components/PillarRadar';
 import { pillarRadarAxes } from '@/lib/pillar-radar';
 import { BrainGraphView } from '@/components/BrainGraphView';
 import { BrainDump } from '@/components/BrainDump';
+import { BrainCorePanel } from '@/components/BrainCorePanel';
 import { Dot, SectionHead } from '@/components/terminal';
 
 export const dynamic = 'force-dynamic';
@@ -410,6 +411,9 @@ export default async function BrainPage() {
           />
         </div>
       </section>
+
+      {/* Architecture V2 · F3 — canonical company knowledge (separate from the viz above) */}
+      <BrainCorePanel />
     </div>
   );
 }

@@ -181,6 +181,14 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     if (await guard(r)) await loadMissions();
   };
 
+  // ── F3 G-Brain: explicit artifact → knowledge promotion (never automatic) ──
+  const promoteArtifact = async (artifactId: string) => {
+    setBusy(artifactId);
+    const r = await api(`/api/company-artifacts/${artifactId}/promote-to-brain`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setBusy(null);
+    if ((await guard(r)) && selectedId) await loadDetail(selectedId);
+  };
+
   return (
     <div className="grid grid-cols-[300px_1fr] gap-5 max-[900px]:grid-cols-1">
       {/* Missions list */}
@@ -233,6 +241,23 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
             {report && report.blockers.length > 0 && (
               <div className="mt-2 rounded-sm-t border border-os-warn/40 bg-os-warn/5 px-3 py-1.5 font-mono text-[10px] text-os-warn">
                 Blockers: {report.blockers.map((b) => `${b.title} (${b.reason.replace('_', ' ')})`).join(' · ')}
+              </div>
+            )}
+
+            {/* F3 — explicitly promote an artifact into durable G-Brain knowledge (never automatic) */}
+            {report && report.artifacts.length > 0 && (
+              <div className="mt-2 rounded-sm-t border border-os-border bg-os-surface px-3 py-2">
+                <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.2em] text-os-dim">Artifacts · {report.artifacts.length}</div>
+                <div className="flex flex-col gap-1">
+                  {report.artifacts.slice(0, 8).map((a) => (
+                    <div key={a.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-mono text-[10px] text-os-muted">{a.title} <span className="text-os-dim">· {a.type}</span></span>
+                      <button onClick={() => promoteArtifact(a.id)} disabled={busy === a.id} className="shrink-0 rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9px] uppercase text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Promote this artifact into durable G-Brain knowledge with provenance">
+                        {busy === a.id ? '…' : 'Promote to G-Brain'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
