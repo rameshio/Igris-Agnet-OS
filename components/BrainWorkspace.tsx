@@ -22,10 +22,21 @@ import { inspectTargetForKgId } from '@/lib/brain/kg-ids';
 import { UniversalInspector } from '@/components/UniversalInspector';
 import { SectionHead } from '@/components/terminal';
 
-type CompanyBrainGraph = { graph: KGData; focusNodeId?: string };
+type CompanyBrainGraph = { graph: KGData; focusNodeId?: string; generatedAt?: string; truncated?: boolean };
 
 const NEURAL_POLL_MS = 5000;
 const NEURAL_WINDOW_OPTIONS = ['15m', '1h', '6h', '24h'] as const;
+// Operational relabelling of the legacy neural stage cards (org → operational meaning).
+const NEURAL_LAYER_NAMES = { tool: 'ARTIFACTS · RUNS', worker: 'AGENTS', task: 'TASKS', team: 'MISSIONS', self: '' } as const;
+
+function relTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return 'just now';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
+}
 
 const RADIAL_SKELETON = (
   <div className="flex flex-col gap-3 lg:flex-row">
@@ -224,13 +235,18 @@ export function BrainWorkspace() {
                 </button>
               ))}
               {root && <span className="ml-2 truncate font-mono text-[9px] text-os-dim">focus: {root}</span>}
+              {operational?.generatedAt && <span className="ml-auto font-mono text-[9px] text-os-dim">as of {relTime(operational.generatedAt)}</span>}
             </div>
-            {operational ? (
-              <NeuralGraph graph={operational.graph} onSelectNode={(id) => void selectNode(id)} hideDirectory />
-            ) : (
+            {!operational ? (
               NEURAL_SKELETON
+            ) : operational.graph.nodes.length === 0 ? (
+              <div className="grid min-h-[280px] w-full place-items-center rounded-lg-t border border-dashed border-os-border bg-os-surface">
+                <p className="px-6 text-center font-mono text-[11px] text-os-dim">No recent company activity in this window.<br />Try a wider window, or run a mission to see the operational flow.</p>
+              </div>
+            ) : (
+              <NeuralGraph graph={operational.graph} onSelectNode={(id) => void selectNode(id)} hideDirectory layerNames={NEURAL_LAYER_NAMES} />
             )}
-            <p className="mt-1 font-mono text-[9px] text-os-dim">Operational projection over company_events + current canonical state · read-only · Activity (U4) is the chronological list.</p>
+            <p className="mt-1 font-mono text-[9px] text-os-dim">Operational projection: missions → tasks → agents/workflow → runs → approvals → artifacts, over company_events + current canonical status · read-only · Activity (U4) is the chronological list.</p>
           </div>
           <UniversalInspector view={view} loading={viewLoading} busy={busy} onAction={runAction} />
         </div>

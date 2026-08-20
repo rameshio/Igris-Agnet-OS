@@ -18,6 +18,7 @@ export const kgId = {
   workflow: (id: string) => `tool:workflow:${id}`,
   run: (id: string) => `tool:run:${id}`,
   approval: (id: string) => `tool:approval:${id}`,
+  event: (id: string) => `tool:event:${id}`,
 };
 
 /** Reverse a KG node id → the canonical Inspector {kind,id}, or null (non-inspectable). */
@@ -30,5 +31,6 @@ export function inspectTargetForKgId(nodeId: string): { kind: string; id: string
   if (nodeId.startsWith('tool:workflow:')) return { kind: 'workflow', id: nodeId.slice('tool:workflow:'.length) };
   if (nodeId.startsWith('tool:run:')) return { kind: 'workflow_run', id: nodeId.slice('tool:run:'.length) };
   if (nodeId.startsWith('tool:approval:')) return { kind: 'approval', id: nodeId.slice('tool:approval:'.length) };
+  if (nodeId.startsWith('tool:event:')) return { kind: 'event', id: nodeId.slice('tool:event:'.length) };
   return null; // self / mission-head / anything else has no canonical inspect target
 }

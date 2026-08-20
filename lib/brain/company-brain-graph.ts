@@ -31,7 +31,13 @@ export const BRAIN_MAX_ARTIFACTS_PER_MISSION = 8;
 export const BRAIN_MAX_KNOWLEDGE = 24;
 export const BRAIN_MAX_NODES = 200;
 
-export type CompanyBrainGraph = { graph: KGData; focusNodeId?: string };
+export type CompanyBrainGraph = {
+  graph: KGData;
+  focusNodeId?: string;
+  /** Operational only — the F5 projection's honest "as of" time + whether a bound was hit. */
+  generatedAt?: string;
+  truncated?: boolean;
+};
 
 // Legacy ring per KG kind (mirrors lib/knowledge-graph RING; the renderer lays out by it).
 const RING = { self: 0, team: 1, head: 2, task: 2, employee: 3, person: 3, tool: 4 } as const;
@@ -157,8 +163,11 @@ export function buildOperationalBrainGraph(db: FounderDb, opts: { window?: strin
   const entity = opts.focus ? `${opts.focus.kind === 'company_task' ? 'task' : opts.focus.kind}:${opts.focus.id}` : undefined;
   const neural = getNeuralGraph(db, { entity, window: opts.window });
 
-  const nodes: KGNode[] = [{ id: SELF, kind: 'self', label: 'IGRIS', ring: RING.self }];
-  const nodeIds = new Set<string>([SELF]);
+  // NO synthetic `self`/"Notes" node — the operational graph is ONLY real F5 neurons
+  // (mission/task/agent/workflow/run/approval/artifact/event). An empty window yields an
+  // empty graph, and the controller shows an honest "no recent activity" state (never Notes).
+  const nodes: KGNode[] = [];
+  const nodeIds = new Set<string>();
   const edges: KGEdge[] = [];
 
   // F5 node id is `<neuralKind>:<canonicalId>`; re-key to the KG id conventions.
@@ -175,7 +184,7 @@ export function buildOperationalBrainGraph(db: FounderDb, opts: { window?: strin
       case 'workflow_run': return idFns.run(id);
       case 'approval': return idFns.approval(id);
       case 'artifact': return idFns.artifact(id);
-      case 'event': return null; // events are chronological (Activity), not neurons
+      case 'event': return idFns.event(id); // operational status/control markers
       default: return null;
     }
   };
@@ -186,8 +195,8 @@ export function buildOperationalBrainGraph(db: FounderDb, opts: { window?: strin
     if (!kgKind || !kgId || nodeIds.has(kgId)) continue;
     nodes.push({ id: kgId, kind: kgKind, label: n.label, ring: RING[kgKind] });
     nodeIds.add(kgId);
-    if (kgKind === 'team') edges.push({ source: SELF, target: kgId, kind: 'pillar' }); // missions hang off the core
   }
+  // Only REAL F5 operational edges — no decorative/fake edges.
   for (const e of neural.edges) {
     const s = kgIdOf(e.from);
     const t = kgIdOf(e.to);
@@ -195,5 +204,5 @@ export function buildOperationalBrainGraph(db: FounderDb, opts: { window?: strin
   }
 
   const focusNodeId = opts.focus ? kgIdForFocus(opts.focus, nodeIds) : undefined;
-  return { graph: { nodes, edges }, focusNodeId };
+  return { graph: { nodes, edges }, focusNodeId, generatedAt: neural.generatedAt, truncated: neural.truncated };
 }

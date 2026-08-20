@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import type { Agent, AgentRun, Department, Person, SopTask } from '@/lib/schemas';
 import { graphDirectory, toolSlugOf, type KnowledgeGraph as KGData, type DirectoryGroup } from '@/lib/knowledge-graph';
-import { neuralLayout, NEURAL_H, NEURAL_W, type NeuralStrand } from '@/lib/neural-layout';
+import { neuralLayout, NEURAL_H, NEURAL_W, type NeuralStrand, type NeuralLayerKind } from '@/lib/neural-layout';
 import { NeuralDetail } from '@/components/NeuralDetail';
 import { GraphDirectory } from '@/components/GraphDirectory';
 
@@ -56,7 +56,7 @@ const hoverKind = (id: string): string => {
 };
 
 export function NeuralGraph({
-  graph, agents = [], departments = [], people = [], tasks = [], runsByAgent = {}, onSelectNode, hideDirectory,
+  graph, agents = [], departments = [], people = [], tasks = [], runsByAgent = {}, onSelectNode, hideDirectory, layerNames,
 }: {
   graph: KGData;
   agents?: Agent[];
@@ -69,6 +69,8 @@ export function NeuralGraph({
   onSelectNode?: (id: string) => void;
   /** Consolidated mode: hide the org-shaped directory (the Inspector replaces it). */
   hideDirectory?: boolean;
+  /** Override the org-shaped stage-card labels (e.g. operational: TASKS/AGENTS/MISSIONS). */
+  layerNames?: Partial<Record<NeuralLayerKind, string>>;
 }) {
   const { layers, pos, strands, reports } = useMemo(() => neuralLayout(graph), [graph]);
   const labelById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n.label])), [graph]);
@@ -282,7 +284,7 @@ export function NeuralGraph({
             className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c7d2f2]"
             style={{ textShadow: '0 1px 6px #0a1024, 0 0 3px #0a1024' }}
           >
-            {layer.name}
+            {layerNames?.[layer.kind] ?? layer.name}
           </div>
         ))}
       </div>

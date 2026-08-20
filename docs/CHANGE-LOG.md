@@ -25,6 +25,22 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-CONSOLIDATION-NEURAL-FIX**
+Phase: Architecture V2 · G-Brain consolidation follow-up (Neural operational data)
+Summary: Fix the consolidated Neural tab rendering almost empty with only a legacy "Notes" node instead of the F5 operational projection.
+Reason: `buildOperationalBrainGraph` injected a synthetic `self` node which the legacy `NeuralGraph` hard-codes as "Notes"; with few recent events that self node was ALL that showed. F5 `event` nodes were also dropped, there was no honest empty-state, and the org-shaped stage labels ("OUTPUT·OBSIDIAN") leaked through.
+Files modified: `lib/brain/company-brain-graph.ts` (remove the `self`/Notes injection from the OPERATIONAL builder — operational nodes are ONLY real F5 neurons; include `event` nodes; drop the fake self→mission edge; pass through `generatedAt`/`truncated`), `lib/brain/kg-ids.ts` (`tool:event:` encode + reverse-map to the `event` Inspector kind), `components/NeuralGraph.tsx` (optional `layerNames` prop to relabel the stage cards), `components/BrainWorkspace.tsx` (honest "No recent company activity in this window." empty-state, operational stage labels ARTIFACTS·RUNS/AGENTS/TASKS/MISSIONS, "as of {generatedAt}" indicator), `tests/company-brain-graph.test.ts` (expanded operational regression).
+Database: no change.
+Data path: `/api/brain/company-graph?mode=operational` → `buildOperationalBrainGraph` → `getNeuralGraph` (F5, over `company_events` + current canonical status) → safe KGData adapter → legacy `NeuralGraph` renderer. The structural Radial path is untouched.
+Behavior: Neural now shows REAL operational neurons (mission/task/agent/workflow/run/approval/artifact/event); the legacy "Notes" node is gone; an empty window shows an honest empty-state (never a Notes fallback); window/focus/poll unchanged; clicking any operational node opens the ONE Universal Inspector (event/workflow_run/approval kinds included).
+Tests added: expanded `tests/company-brain-graph.test.ts` operational block (11 total) — all F5 kinds appear, no self/Notes, empty-window → empty graph, event nodes reverse-map to the `event` Inspector kind, mission focus, and privacy leak canaries (context_json/startingInput/prompt/model id/artifact content).
+Tests run: `tsc --noEmit` + full `vitest run`.
+Results: 1614 passed (170 files); typecheck clean. Verified live on 4100: operational endpoint carries NO `self` node; a fresh capability-gap dispatch surfaced real event+task neurons; the Neural tab renders them with operational stage labels + "as of …" and no "Notes"; only pre-existing console noise (`vantage-emblem.png` 404 + `BrainViz` float hydration warning).
+Known limits: the operational chain still funnels through the legacy 5-lane neural layout (missions→tasks→agents→artifacts/runs by kind), so non-adjacent operational edges (e.g. task→approval) don't draw a strand though both nodes appear; a bespoke operational layout is a future option.
+Rollback: revert the four files + test; no schema to reverse.
+
+---
+
 Change ID: **V2-CONSOLIDATION**
 Phase: Architecture V2 · G-Brain consolidation (ONE brain + safe cleanup)
 Summary: Collapse the duplicate G-Brain on `/brain` (old `BrainGraphView` [Radial][Neural] org constellation ABOVE the new F4/F5 [Radial][Neural] SVG workspace) into ONE brain — the original attractive `KnowledgeGraph`/`NeuralGraph` renderers now consume CANONICAL company data via an adapter; `/brain` is never blank; deep-links focus the same brain; and a safe mission archive/delete-test cleanup seam is added.
