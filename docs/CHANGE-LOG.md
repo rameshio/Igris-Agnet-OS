@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-F6**
+Phase: Architecture V2 · F6 (Company Intelligence)
+Summary: A derived, read-only analytical/decision-support layer over the company built in F0–F5 — work health, capability coverage, execution, approvals, and agent workload, plus deterministic explainable signals — bounded to a window (1h/24h/7d/30d, default 7d). Activity = chronological · Radial = structural · Neural = operational · Intelligence = analytical.
+Reason: F4/F5 show raw/recent state; F6 answers "what is slowing the company down? where are gaps? which work waits too long?" as decision support — WITHOUT becoming a second source of truth, another orchestrator, or a new telemetry platform.
+Files added: `lib/company/intelligence/model.ts` (pure snapshot + signal shapes, windows/thresholds, coverage classifier, duration stats, deterministic `deriveSignals`), `lib/company/intelligence/{work-health,capabilities,execution,approvals,agents}.ts` (analyzers), `lib/company/intelligence/service.ts` (`getCompanyIntelligence`); `app/api/company/intelligence/route.ts`; `components/CompanyIntelligence.tsx`; `app/intelligence/page.tsx`; `tests/company-intelligence.test.ts`.
+Files modified: `lib/db.ts` (additive `companyTasks.all()` read), `lib/nav.ts` (`/intelligence` under Agents), `tests/{smoke-api,smoke,nav}.test.ts`, docs (ARCHITECTURE §6i, PHASE-STATUS F6 + matrix + invariant 29, CHANGELOG, SECURITY, AGENTS).
+Database: no changes (read-only derived analysis; added one company-wide read method only — no table, no column, no new event/telemetry/analytics store).
+API: added `GET /api/company/intelligence?window=1h|24h|7d|30d` (default 7d; invalid window → 400). Read-only; no mutation endpoint.
+Behavior: new `/intelligence` dashboard (health summary + explainable signal cards + per-domain panels) with a window switcher, slow off-tab-paused poll, and evidence deep-links to Missions/G-Brain/Agents/Flows/Approvals. Navigation only — no action/mutation from Intelligence.
+Tests added: `tests/company-intelligence.test.ts` (21 — pure helpers/determinism; work-health counts + stale detection + completed/cancelled-never-stale; capability gap/single/healthy + required-by + event/promotion correlation; execution completion/failure + execution mix + real-durations-only; approvals pending/oldest + tasks-waiting; agent active-assignments + overload + no-performance-score; workflow failure-cluster threshold; windowing accept/reject + out-of-window exclusion; separation no-mutation + no-brain-ingestion + determinism; privacy leak canaries). Plus `smoke-api` (company/intelligence 200), `smoke` (page renders), `nav` (group updated).
+Tests run: `tsc --noEmit` + full `vitest run`.
+Results: 1596 passed (168 files); typecheck clean. Verified live on 4100 (7d snapshot rich + correct, invalid window → 400, windowing applied, privacy clean, page renders + window switch re-fetches; the only console 404 is the pre-existing `vantage-emblem.png` asset, unrelated).
+Known limits: exact-id capability matching (inherits F0.1); no cost/token/utilization/quality metrics (no telemetry backs them — honestly absent, rendered as insufficient_data); approval→task evidence resolves via the workflow run (direct-agent approvals show no task link); optional LLM narrative synthesis NOT built; thresholds are centralized constants (no settings UI yet).
+Rollback: code-only (no schema). Remove `lib/company/intelligence/*`, `app/api/company/intelligence/*`, `app/intelligence/*`, `components/CompanyIntelligence.tsx`, the `companyTasks.all()` method, the nav entry, and the test/doc additions.
+
+---
+
 Change ID: **V2-F5**
 Phase: Architecture V2 · F5 (G-Brain Neural)
 Summary: The Neural tab becomes a read-only live/recent OPERATIONAL graph — missions → tasks → agents → workflow runs → approvals → artifacts — projected over the `company_events` ledger and reconciled with current canonical state, over a bounded time window with ~5s polling. Radial = structural · Neural = operational · Activity (U4) = chronological.

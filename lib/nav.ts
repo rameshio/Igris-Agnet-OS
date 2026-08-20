@@ -25,6 +25,7 @@ import {
   LayoutGrid,
   Layers,
   Settings,
+  Gauge,
 } from 'lucide-react';
 
 export type NavItem = { href: string; label: string; icon: typeof Home };
@@ -48,6 +49,8 @@ export const NAV_AGENTS: NavItem[] = [
   { href: '/skills', label: 'Skills', icon: Sparkles },
   { href: '/org', label: 'Org Chart', icon: Network },
   { href: '/missions', label: 'Missions', icon: Target },
+  // V2-F6 — read-only analytical layer over the company work above.
+  { href: '/intelligence', label: 'Intelligence', icon: Gauge },
 ];
 
 // The knowledge layer the agents draw on.

@@ -83,6 +83,14 @@
 - **No new realtime infrastructure.** Liveness is polling (~5s) with a no-overlap guard, paused unless the Neural tab is active and stopped on unmount — **no WebSockets**. Failure is honest (retry state; "as of {generatedAt}"), never presenting stale data as live.
 - **Boundaries preserved.** Radial is unchanged (no `company_events` projected into it); Neural writes nothing to G-Brain knowledge (no `event → BrainKnowledge`).
 
+## Company Intelligence authority + privacy (Architecture V2 · F6)
+
+- **Derived read model, never authority.** `GET /api/company/intelligence` only READS existing canonical state (missions/tasks/agents/capabilities/runs/approvals/events/proposals) and derives counts, timings, coverage, and signals. It never mutates a canonical table, never creates an agent (Factory F2 stays the sole creation authority), never reassigns or auto-remediates, and adds **no new event/telemetry/analytics store** (one company-wide read method only). A regression test asserts `company_tasks`/`company_missions`/`company_events`/`company_agent_proposals`/`brain_entities` row counts are unchanged after generating a snapshot. There is no mutation endpoint.
+- **Navigation only.** The dashboard exposes deep-links to the owning canonical surfaces (Missions / G-Brain `?entity=` / Agents / Flows / Approvals) — it renders no action controls. Any future mutating action must go through the existing U3/Phase-E authority path, never from Intelligence. It writes nothing to G-Brain knowledge (**no `signal → BrainKnowledge`** ingestion).
+- **No fake precision.** Metrics the underlying data cannot defensibly support are `null` (insufficient_data), never manufactured — there is deliberately no cost/token/utilization/quality metric (no telemetry backs them) and no performance/"best-employee" score. Signals are a CLOSED, deterministic set of 8 types (never LLM-generated), each carrying evidence + the firing threshold.
+- **Safe projection only.** The snapshot carries identifiers + labels + counts + timings. It NEVER exposes prompts, system instructions, model ids, auth tokens, tool credentials, approval `context_json`, workflow `startingInput`, node outputs, tool args, or artifact content — verified by leak-canary tests scanning the serialized snapshot.
+- **Bounded input.** The window is validated against a closed set (1h/24h/7d/30d, default 7d); an unknown value is rejected with 400 — a URL parameter can never widen the analysis arbitrarily.
+
 ## Human Approval endpoints (Phase E)
 
 - **Backend-authoritative:** `POST /api/flow-approvals/:id/approve|reject` accept only the approval id (path), the decision (route), and an optional note. The run id, workflow, node, and approve/reject routes are read from the persisted `flow_approvals` row — the client cannot supply run state, a workflow id, or a foreign run. One approval can therefore only ever resolve its own run.

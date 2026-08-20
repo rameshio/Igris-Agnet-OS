@@ -996,6 +996,10 @@ export function openDb(path: string) {
     forMission(missionId: string): CompanyTask[] {
       return db.prepare('SELECT * FROM company_tasks WHERE mission_id = ? ORDER BY created_at, id').all(missionId).map((r) => rowToCompanyTask(r as CompanyTaskRow));
     },
+    /** Every company task across all missions, oldest first (F6 Company Intelligence read model). */
+    all(): CompanyTask[] {
+      return db.prepare('SELECT * FROM company_tasks ORDER BY created_at, id').all().map((r) => rowToCompanyTask(r as CompanyTaskRow));
+    },
     insert(t: CompanyTask): void {
       db.prepare(
         `INSERT OR REPLACE INTO company_tasks

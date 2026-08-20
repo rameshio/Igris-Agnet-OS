@@ -480,6 +480,46 @@ these connections right now?"*** — a **read-only projection of live/recent OPE
   recommendations), new event store, new workflow/approval engine, autonomous or graph-controlled
   orchestration, G-Brain auto-ingestion, Neo4j, Temporal, WebSockets. See `docs/CHANGE-LOG.md` V2-F5 record.
 
+### 6i. Company Intelligence (Architecture V2 · F6) ✅
+
+Radial/Neural show raw/recent state; **Intelligence answers *"what is slowing the company down?"*** —
+a **DERIVED, read-only analytical/decision-support layer** over everything built in F0–F5. It is
+NOT another orchestration system and NOT a source of truth for any operational object.
+
+**Four projections of one company:** Activity (U4) = **chronological** · Radial (F4) = **structural** ·
+Neural (F5) = **operational** · **Intelligence (F6) = analytical**. Intelligence is *derived/read-only —
+it never becomes canonical operational state.*
+
+- **Critical rule:** Company Intelligence is a DERIVED read model. It never mutates canonical state,
+  never creates agents (Factory F2 stays the sole creation authority), never reassigns/auto-remediates,
+  and adds **no new event/telemetry/analytics store** (only a company-wide `companyTasks.all()` read).
+- **No fake precision:** any metric the underlying data cannot defensibly support is `null`
+  (insufficient_data) — never manufactured. There is deliberately no cost/token/utilization/quality
+  metric (no telemetry backs them) and **no "best employee" performance score**.
+- **Model** (`lib/company/intelligence/model.ts`, pure): closed snapshot + signal shapes; centralized
+  windows (1h/24h/7d/30d, default 7d — validated, invalid rejected) + thresholds; coverage classifier
+  (gap/single_point/healthy); duration statistics (median-preferred, valid durations only); and the
+  DETERMINISTIC `deriveSignals`. **Signals are a CLOSED set of 8 explainable types** — `stale_task`,
+  `blocked_mission`, `capability_gap`, `single_point_capability`, `approval_delay`, `repeated_failure`,
+  `agent_overload`, `workflow_failure_cluster` — each carrying evidence + the firing threshold; ids are
+  stable/deduped, output severity-sorted (no LLM/arbitrary signal types).
+- **Analyzers** (`work-health`/`capabilities`/`execution`/`approvals`/`agents`): each reads canonical
+  rows and computes counts/timings/coverage. Current-state metrics (queue depth, blocked missions,
+  zero-coverage capabilities, pending approvals) reflect NOW; windowed metrics (completions, failures,
+  throughput, factory activity) are bounded to the window. Stale detection uses task timestamps +
+  thresholds (never event guesswork; a completed/cancelled task is never stale). Capability coverage
+  uses the F0.1 resolver (exact-id) and correlates in-window CAPABILITY_GAP events + factory promotions.
+- **Service + API** (`service.ts`, `GET /api/company/intelligence?window=`): composes the analyzers into
+  one `CompanyIntelligenceSnapshot`. Read-only; **no mutation endpoint**. React calls ONE API.
+- **UI** (`components/CompanyIntelligence.tsx`, `/intelligence`): health summary + signal cards + per-domain
+  panels; window switcher + slow poll (paused off-tab). Every signal's evidence **deep-links** to its
+  owning canonical surface (Missions / G-Brain `?entity=` / Agents / Flows / Approvals). **Navigation only**
+  — Intelligence takes no action and writes nothing (no `signal → BrainKnowledge`).
+- **Privacy:** identifiers + labels + counts + timings only — never prompts/tokens/`context_json`/
+  startingInput/node outputs/tool args/artifact content (leak-canary tested).
+- **Not built in F6** (deferred): Reliability Phase G, autonomous remediation, auto-agent creation,
+  optional LLM narrative synthesis, a thresholds settings UI, any new telemetry/observability platform.
+
 ---
 
 ## 7. Model architecture
