@@ -25,6 +25,25 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-ARTIFACT-VIEW-RESULT**
+Phase: Architecture V2 · consolidation follow-up (artifact reading UX)
+Summary: Add a "View Result" artifact-detail experience on `/missions` so the operator can read the full agent/workflow output, not just its title.
+Reason: A Company Artifact rendered as plain, non-clickable text with only "Promote to G-Brain" — the agent's actual result was unreadable from the Mission page.
+Files modified: `components/MissionsBoard.tsx` (clickable artifact title + "View result" action + a focused detail modal: title/type/full-content/summary/provenance/Promote/Close; `readableContent` helper renders strings as-is and structured JSON pretty-printed — never `[object Object]`); `tests/artifact-detail.test.ts` (new).
+Database: no change.
+Artifact detail data path: click → `GET /api/company-artifacts/:id` (pre-existing secure single-item route, REUSED) → `getArtifact` → full `CompanyArtifact` (incl. `content`) → modal. Broad feeds (`missionArtifacts`/mission report) keep the `safeArtifactSummary` projection (no content).
+Full-content access: full `content` is returned ONLY by the explicit per-artifact detail read; the mission report/list stays content-free (asserted). Missing artifact → 404.
+Provenance: the modal shows Mission (title), Task (title), producing agent OR workflow run, and created time — resolved from the artifact's own fields (not spoofable to another mission).
+Promote preservation: `Promote to G-Brain` unchanged (explicit + idempotent); viewing an artifact issues a read-only `GET` and creates NO G-Brain knowledge (no auto-promote on view — tested).
+Privacy: the artifact model carries no prompts/tokens/tool-args/`context_json`/`startingInput`; the detail exposes only the safe artifact shape (content is the intended output). Rendering uses escaped React text — no `dangerouslySetInnerHTML`, no markdown/HTML dependency added.
+Tests added: `tests/artifact-detail.test.ts` (8) — detail returns full content + provenance; structured JSON kept as an object; missing → 404; own-provenance (no cross-mission spoof); no hidden secret fields; broad list excludes content; view creates no knowledge; Promote remains explicit + idempotent.
+Tests run: `tsc --noEmit` + full `vitest run`.
+Results: 1622 passed (171 files); typecheck clean. Verified live on 4100: the real "Define Top AI Scope — result" artifact — VIEW RESULT opens the modal with the full 1517-char result readably formatted, summary, and correct provenance (Mission RESEARCH ABOT TOP AI · Task Define Top AI Scope · agent · created); detail endpoint returns content while the mission report omits it; bogus id → 404; only pre-existing console noise (`vantage-emblem.png` 404).
+Known limits: content renders as preformatted text / pretty JSON (no markdown formatting — no markdown dep present); the detail route is global-by-id (returns the artifact's own provenance) rather than mission-scoped.
+Rollback: revert `components/MissionsBoard.tsx` + delete the test; nothing else changed.
+
+---
+
 Change ID: **V2-CONSOLIDATION-NEURAL-FIX**
 Phase: Architecture V2 · G-Brain consolidation follow-up (Neural operational data)
 Summary: Fix the consolidated Neural tab rendering almost empty with only a legacy "Notes" node instead of the F5 operational projection.

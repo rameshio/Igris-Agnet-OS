@@ -9,6 +9,9 @@ failures/RCAs in `docs/INCIDENTS.md`.
 ## [Unreleased]
 
 ### Fixed
+- **Operators can now read an agent's actual result — "View Result" on `/missions`.** A Company Artifact showed on the Mission page as plain, non-clickable text with only a "Promote to G-Brain" action, so the operator could not read the work the agent produced. The artifact row's title is now clickable and a **View result** action opens a focused detail modal showing the title, type, full **result** (strings rendered readably, structured JSON pretty-printed — never `[object Object]`), summary, and provenance (Mission · Task · producing agent/workflow · created time), plus **Promote to G-Brain** and **Close**. Full content is fetched ONLY by the explicit per-artifact detail read (`GET /api/company-artifacts/:id`, which already existed and is reused) — broad mission/report feeds keep the content-free safe projection. Viewing an artifact NEVER promotes it (the read is a `GET`); Promote stays explicit + idempotent. No DB change, no execution/Manager/creation change. 8 new tests; **1622 tests green** + tsc clean; verified live on the real "Define Top AI Scope — result" artifact.
+
+### Fixed
 - **Hydration mismatch on the collapsible sidebar / workflow list.** `Sidebar` and `FlowWorkspace` read their persisted collapse preference in the `useState` initializer, so the server rendered *expanded* while the client's first render was *collapsed* ("IGRIS AGENT…" vs "IA") — React flagged a hydration error. Both now start expanded (matching the server) and hydrate the real preference in a mount `useEffect`; the pre-paint `--nav-w` init script keeps the width correct, so there is no flash. No behavior change.
 
 ### Fixed

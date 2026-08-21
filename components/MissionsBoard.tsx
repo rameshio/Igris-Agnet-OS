@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Mission, CompanyTask, CompanyTaskStatus } from '@/lib/company/model';
 import { COMPANY_TASK_STATUSES } from '@/lib/company/model';
-import type { MissionReport, CompanyEvent } from '@/lib/company/manager/model';
+import type { MissionReport, CompanyEvent, CompanyArtifact } from '@/lib/company/manager/model';
 import type { AgentProposal } from '@/lib/company/factory/model';
 import type { MissionCleanupPreview } from '@/lib/company/cleanup/service';
 import type { AgentMatch } from '@/lib/agents/capabilities';
@@ -41,6 +41,18 @@ async function api<T>(url: string, init?: RequestInit): Promise<{ ok: boolean; d
   }
 }
 
+/** Render artifact content readably: a string as-is, structured JSON pretty-printed
+ *  (never `[object Object]`). No markdown/HTML dependency — React escapes the text. */
+function readableContent(content: unknown): string {
+  if (content === null || content === undefined) return '(no content)';
+  if (typeof content === 'string') return content;
+  try {
+    return JSON.stringify(content, null, 2);
+  } catch {
+    return String(content);
+  }
+}
+
 export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] }) {
   const [missions, setMissions] = useState<Mission[]>(initialMissions);
   const [selectedId, setSelectedId] = useState<string | null>(initialMissions[0]?.id ?? null);
@@ -55,6 +67,10 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  // Artifact detail (full content) — fetched ONLY by an explicit view, via the secure
+  // per-artifact endpoint. Broad report/list feeds stay content-free (safe projection).
+  const [viewingArtifact, setViewingArtifact] = useState<CompanyArtifact | null>(null);
+  const [artifactLoading, setArtifactLoading] = useState(false);
 
   const selected = missions.find((m) => m.id === selectedId) ?? null;
   // Archived missions are hidden from the default view (kept, not deleted).
@@ -216,6 +232,15 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     }
   };
 
+  // ── View the FULL artifact result — explicit per-artifact detail read (content included). ──
+  const viewArtifact = async (artifactId: string) => {
+    setArtifactLoading(true);
+    const r = await api<{ artifact: CompanyArtifact }>(`/api/company-artifacts/${artifactId}`);
+    setArtifactLoading(false);
+    if (r.ok && r.data) setViewingArtifact(r.data.artifact);
+    else setError(r.error ?? 'could not load artifact');
+  };
+
   // ── F3 G-Brain: explicit artifact → knowledge promotion (never automatic) ──
   const promoteArtifact = async (artifactId: string) => {
     setBusy(artifactId);
@@ -301,10 +326,15 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                 <div className="flex flex-col gap-1">
                   {report.artifacts.slice(0, 8).map((a) => (
                     <div key={a.id} className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate font-mono text-[10px] text-os-muted">{a.title} <span className="text-os-dim">· {a.type}</span></span>
-                      <button onClick={() => promoteArtifact(a.id)} disabled={busy === a.id} className="shrink-0 rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9px] uppercase text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Promote this artifact into durable G-Brain knowledge with provenance">
-                        {busy === a.id ? '…' : 'Promote to G-Brain'}
+                      <button onClick={() => viewArtifact(a.id)} className="min-w-0 flex-1 truncate text-left font-mono text-[10px] text-os-muted transition-colors hover:text-os-accent" title="Open the full artifact result">
+                        {a.title} <span className="text-os-dim">· {a.type}</span>
                       </button>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button onClick={() => viewArtifact(a.id)} disabled={artifactLoading} className="rounded border border-os-border-strong px-2 py-0.5 font-mono text-[9px] uppercase text-os-muted hover:text-os-text disabled:opacity-40">View result</button>
+                        <button onClick={() => promoteArtifact(a.id)} disabled={busy === a.id} className="rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9px] uppercase text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Promote this artifact into durable G-Brain knowledge with provenance">
+                          {busy === a.id ? '…' : 'Promote to G-Brain'}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -430,6 +460,69 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
           </div>
         )}
       </div>
+
+      {/* Artifact detail — full result + provenance, opened explicitly. Viewing NEVER promotes. */}
+      {viewingArtifact && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setViewingArtifact(null)} role="dialog" aria-modal="true">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg-t border border-os-border-strong bg-os-bg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b border-os-border px-4 py-3">
+              <div className="min-w-0">
+                <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-os-dim">Artifact</div>
+                <h3 className="truncate text-[15px] font-bold text-os-text">{viewingArtifact.title}</h3>
+                <div className="mt-0.5 font-mono text-[10px] text-os-dim">type: {viewingArtifact.type}{viewingArtifact.contentType ? ` · ${viewingArtifact.contentType}` : ''}</div>
+              </div>
+              <button onClick={() => setViewingArtifact(null)} className="shrink-0 rounded border border-os-border px-2 py-1 font-mono text-[10px] uppercase text-os-dim hover:text-os-text">Close</button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+              {viewingArtifact.summary && (
+                <div className="mb-3">
+                  <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-os-dim">Summary</div>
+                  <p className="text-[12px] leading-relaxed text-os-muted">{viewingArtifact.summary}</p>
+                </div>
+              )}
+              <div className="mb-3">
+                <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-os-dim">Result</div>
+                <pre className="max-h-[45vh] overflow-auto whitespace-pre-wrap break-words rounded-sm-t border border-os-border bg-os-surface p-3 font-mono text-[11px] leading-relaxed text-os-text">{readableContent(viewingArtifact.content)}</pre>
+              </div>
+              <div>
+                <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.2em] text-os-dim">Provenance</div>
+                <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[10.5px]">
+                  <dt className="text-os-dim">Mission</dt>
+                  <dd className="min-w-0 truncate text-os-muted">{missions.find((m) => m.id === viewingArtifact.missionId)?.title ?? viewingArtifact.missionId}</dd>
+                  {viewingArtifact.taskId && (
+                    <>
+                      <dt className="text-os-dim">Task</dt>
+                      <dd className="min-w-0 truncate text-os-muted">{tasks.find((t) => t.id === viewingArtifact.taskId)?.title ?? viewingArtifact.taskId}</dd>
+                    </>
+                  )}
+                  {viewingArtifact.producedByAgentId && (
+                    <>
+                      <dt className="text-os-dim">Produced by</dt>
+                      <dd className="min-w-0 truncate text-os-muted">agent · {viewingArtifact.producedByAgentId}</dd>
+                    </>
+                  )}
+                  {viewingArtifact.workflowRunId && (
+                    <>
+                      <dt className="text-os-dim">Workflow run</dt>
+                      <dd className="min-w-0 truncate text-os-muted">{viewingArtifact.workflowRunId}</dd>
+                    </>
+                  )}
+                  <dt className="text-os-dim">Created</dt>
+                  <dd className="text-os-muted">{new Date(viewingArtifact.createdAt).toLocaleString()}</dd>
+                </dl>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 border-t border-os-border px-4 py-3">
+              <button onClick={() => promoteArtifact(viewingArtifact.id)} disabled={busy === viewingArtifact.id} className="rounded border border-os-accent/50 px-3 py-1.5 font-mono text-[10px] uppercase text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Promote this artifact into durable G-Brain knowledge with provenance (explicit, idempotent)">
+                {busy === viewingArtifact.id ? 'promoting…' : 'Promote to G-Brain'}
+              </button>
+              <button onClick={() => setViewingArtifact(null)} className="rounded border border-os-border-strong px-3 py-1.5 font-mono text-[10px] uppercase text-os-muted hover:text-os-text">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
