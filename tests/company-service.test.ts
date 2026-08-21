@@ -140,12 +140,12 @@ describe('dependencies', () => {
 describe('capabilities + assignment (F0.1 integration)', () => {
   test('eligible resolution + compat-checked manual assignment', () => {
     const db = openDb(':memory:');
-    const able = agentWithCaps(db, 'Scout', ['research.web']);
+    const able = agentWithCaps(db, 'Scout', ['research.market']);
     const unable = agentWithCaps(db, 'Clerk', []);
     const m = createMission(db, { title: 'M' });
     const t = createCompanyTask(db, m.id, { title: 'Competitor analysis' });
 
-    setTaskCapabilities(db, t.id, ['research.web']);
+    setTaskCapabilities(db, t.id, ['research.market']);
     expect(getEligibleAgentsForTask(db, t.id).map((a) => a.agentId)).toEqual([able]);
 
     // compatible assign succeeds and moves queued→assigned
@@ -174,9 +174,9 @@ describe('separation, security, idempotency', () => {
 
   test('outputs carry no prompts/secrets/tool config', () => {
     const db = openDb(':memory:');
-    const able = agentWithCaps(db, 'Scout', ['research.web']);
+    const able = agentWithCaps(db, 'Scout', ['research.market']);
     const m = createMission(db, { title: 'M' });
-    const t = createCompanyTask(db, m.id, { title: 'T', requiredCapabilities: ['research.web'] });
+    const t = createCompanyTask(db, m.id, { title: 'T', requiredCapabilities: ['research.market'] });
     const json = JSON.stringify({ mission: getMission(db, m.id), task: t, eligible: getEligibleAgentsForTask(db, t.id), summary: missionSummary(db, m.id), assign: assignTask(db, t.id, able) });
     for (const banned of ['systemPrompt', 'instructions', 'chatTools', 'tools', 'token', 'apiKey', 'secret']) {
       expect(json).not.toContain(banned);

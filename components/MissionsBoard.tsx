@@ -60,7 +60,7 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
   const [newMission, setNewMission] = useState('');
   const [newTask, setNewTask] = useState('');
   const [newTaskCaps, setNewTaskCaps] = useState('');
-  const [eligibleFor, setEligibleFor] = useState<{ taskId: string; agents: AgentMatch[] } | null>(null);
+  const [eligibleFor, setEligibleFor] = useState<{ taskId: string; agents: AgentMatch[]; toolGaps: { capabilityId: string; reason: string }[] } | null>(null);
   const [report, setReport] = useState<MissionReport | null>(null);
   const [events, setEvents] = useState<CompanyEvent[]>([]);
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
@@ -140,8 +140,8 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
 
   const showEligible = async (taskId: string) => {
     if (eligibleFor?.taskId === taskId) return setEligibleFor(null);
-    const r = await api<{ agents: AgentMatch[] }>(`/api/company-tasks/${taskId}/eligible-agents`);
-    if (await guard(r)) setEligibleFor({ taskId, agents: r.data?.agents ?? [] });
+    const r = await api<{ agents: AgentMatch[]; toolGaps: { capabilityId: string; reason: string }[] }>(`/api/company-tasks/${taskId}/eligible-agents`);
+    if (await guard(r)) setEligibleFor({ taskId, agents: r.data?.agents ?? [], toolGaps: r.data?.toolGaps ?? [] });
   };
 
   const assign = async (taskId: string, agentId: string) => {
@@ -386,12 +386,25 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                   {eligibleFor?.taskId === t.id && (
                     <div className="mt-2 rounded border border-os-border bg-os-bg p-2">
                       {eligibleFor.agents.length === 0 ? (
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0 font-mono text-[10px] text-os-dim">No eligible agent. The Agent Factory (F2) can propose one — created only on approval.</div>
-                          {t.requiredCapabilities.length > 0 && (
-                            <button onClick={() => proposeAgent(t.id)} disabled={busy === t.id} className="shrink-0 rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Agent Factory to propose an agent that fills this gap (human-approved)">
-                              {busy === t.id ? '…' : 'Propose agent'}
-                            </button>
+                        <div className="flex flex-col gap-1.5">
+                          {eligibleFor.toolGaps.length > 0 ? (
+                            // A capability LABEL exists but the required real tool is unavailable —
+                            // the Factory cannot grant it, so proposing a new agent would not help.
+                            <div className="font-mono text-[10px] text-os-warn">
+                              No eligible agent — missing tool.
+                              {eligibleFor.toolGaps.map((g) => (
+                                <div key={g.capabilityId} className="mt-0.5 text-os-dim">{g.reason}</div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0 font-mono text-[10px] text-os-dim">No eligible agent. The Agent Factory (F2) can propose one — created only on approval.</div>
+                              {t.requiredCapabilities.length > 0 && (
+                                <button onClick={() => proposeAgent(t.id)} disabled={busy === t.id} className="shrink-0 rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Agent Factory to propose an agent that fills this gap (human-approved)">
+                                  {busy === t.id ? '…' : 'Propose agent'}
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       ) : (

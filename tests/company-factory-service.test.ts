@@ -42,11 +42,11 @@ const validSpec = {
   instructions: 'Research the topic and report findings honestly.',
   model: '',
   tools: ['gbrain'],
-  requiredCapabilities: ['research.web'],
+  requiredCapabilities: ['research.market'],
   rationale: 'No existing agent can research the web.',
 };
 
-function missionWithGapTask(db: DB, cap = 'research.web') {
+function missionWithGapTask(db: DB, cap = 'research.market') {
   const m = createMission(db, { title: 'Market study' });
   const task = createCompanyTask(db, m.id, { title: 'Analyze the market', requiredCapabilities: [cap] });
   return { missionId: m.id, taskId: task.id };
@@ -62,7 +62,7 @@ describe('proposeAgentForGap', () => {
 
     expect(proposal.status).toBe('pending');
     expect(proposal.agentId).toBeUndefined();
-    expect(proposal.requiredCapabilities).toEqual(['research.web']); // server-owned = the gap
+    expect(proposal.requiredCapabilities).toEqual(['research.market']); // server-owned = the gap
     expect(db.customAgents.all().length).toBe(agentsBefore); // nothing created
     expect(db.agentCapabilities.all()).toHaveLength(0); // nothing assigned
     expect(db.companyAgentProposals.forMission(missionId).map((p) => p.status)).toEqual(['pending']);
@@ -73,8 +73,8 @@ describe('proposeAgentForGap', () => {
     const db = openDb(':memory:');
     // An existing agent already covers the capability.
     const a = createCustomAgent(db, { name: 'Existing', departmentId: 'dept-tech', instructions: 'x', model: '', tools: [], enabled: true });
-    db.capabilities.upsert({ id: 'research.web', name: 'research.web' });
-    db.agentCapabilities.assign(a.id, { capabilityId: 'research.web' });
+    db.capabilities.upsert({ id: 'research.market', name: 'research.market' });
+    db.agentCapabilities.assign(a.id, { capabilityId: 'research.market' });
     const { taskId } = missionWithGapTask(db);
 
     await expect(proposeAgentForGap(db, taskId, { proposer: proposerFor(validSpec) })).rejects.toMatchObject({ status: 409 });
@@ -100,7 +100,7 @@ describe('promoteProposal', () => {
   test('creates an enabled agent, assigns the gap caps, and the F1 resolver now matches', async () => {
     const db = openDb(':memory:');
     const { taskId } = missionWithGapTask(db);
-    expect(resolveAgentsForCapabilities(db, ['research.web'], { mode: 'all' })).toHaveLength(0); // gap
+    expect(resolveAgentsForCapabilities(db, ['research.market'], { mode: 'all' })).toHaveLength(0); // gap
 
     const proposal = await proposeAgentForGap(db, taskId, { proposer: proposerFor(validSpec) });
     const { agentId, created } = promoteProposal(db, proposal.id);
@@ -111,7 +111,7 @@ describe('promoteProposal', () => {
     expect(agent.name).toBe('Web Scout');
     expect(agent.tools).toEqual(['gbrain']);
     // Resolver now matches the freshly created agent.
-    const eligible = resolveAgentsForCapabilities(db, ['research.web'], { mode: 'all' });
+    const eligible = resolveAgentsForCapabilities(db, ['research.market'], { mode: 'all' });
     expect(eligible.map((e) => e.agentId)).toContain(agentId);
 
     // The gap task now dispatches to the new agent (existing runtime; stub provider).
@@ -166,7 +166,7 @@ describe('retireTemporaryAgents', () => {
     const retired = retireTemporaryAgents(db, missionId);
     expect(retired).toContain(agentId);
     expect(db.customAgents.get(agentId)!.enabled).toBe(false);
-    expect(resolveAgentsForCapabilities(db, ['research.web'], { mode: 'all' })).toHaveLength(0); // no longer matches
+    expect(resolveAgentsForCapabilities(db, ['research.market'], { mode: 'all' })).toHaveLength(0); // no longer matches
     expect(db.companyEvents.forMission(missionId).map((e) => e.type)).toContain('AGENT_RETIRED');
   });
 });

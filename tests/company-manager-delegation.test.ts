@@ -49,9 +49,9 @@ function publishWorkflow(db: DB, id: string) {
 describe('agent dispatch', () => {
   test('creates exactly one agent run + one artifact; lifecycle + events; idempotent retry', async () => {
     const db = openDb(':memory:');
-    const agentId = agentWithCap(db, 'Scout', 'research.web');
+    const agentId = agentWithCap(db, 'Scout', 'research.market');
     const m = createMission(db, { title: 'M' });
-    const task = createCompanyTask(db, m.id, { title: 'Competitor analysis', requiredCapabilities: ['research.web'] });
+    const task = createCompanyTask(db, m.id, { title: 'Competitor analysis', requiredCapabilities: ['research.market'] });
 
     const runsBefore = db.agentRuns.recent(100).length;
     const r = await dispatchTask(db, task.id);
@@ -97,10 +97,10 @@ describe('capability gap — F1 never creates an agent (that is F2)', () => {
 describe('dependency gating', () => {
   test('a task with an unsatisfied prerequisite waits, never dispatches', async () => {
     const db = openDb(':memory:');
-    const agentId = agentWithCap(db, 'Scout', 'research.web');
+    const agentId = agentWithCap(db, 'Scout', 'research.market');
     const m = createMission(db, { title: 'M' });
-    const a = createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.web'] });
-    const b = createCompanyTask(db, m.id, { title: 'B', requiredCapabilities: ['research.web'] });
+    const a = createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.market'] });
+    const b = createCompanyTask(db, m.id, { title: 'B', requiredCapabilities: ['research.market'] });
     void agentId;
     addTaskDependency(db, b.id, a.id); // B depends on A
 
@@ -154,9 +154,9 @@ describe('workflow dispatch (existing engine, published only)', () => {
 describe('safety', () => {
   test('task/artifact/event output leaks no prompts/secrets/tool config', async () => {
     const db = openDb(':memory:');
-    const agentId = agentWithCap(db, 'Scout', 'research.web');
+    const agentId = agentWithCap(db, 'Scout', 'research.market');
     const m = createMission(db, { title: 'M' });
-    const task = createCompanyTask(db, m.id, { title: 'T', requiredCapabilities: ['research.web'] });
+    const task = createCompanyTask(db, m.id, { title: 'T', requiredCapabilities: ['research.market'] });
     await dispatchTask(db, task.id);
     void agentId;
     const json = JSON.stringify({ task: getCompanyTask(db, task.id), events: db.companyEvents.forTask(task.id), artifacts: db.companyArtifacts.forTask(task.id).map((a) => ({ id: a.id, title: a.title, type: a.type })) });

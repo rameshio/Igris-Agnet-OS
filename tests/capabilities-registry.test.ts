@@ -23,7 +23,7 @@ import {
 const builtinId = (db: ReturnType<typeof openDb>) => allRuntimeAgents(db)[0].id;
 
 function seedAgentsAndCaps(db: ReturnType<typeof openDb>) {
-  db.capabilities.upsert({ id: 'research.web', name: 'Web Research' });
+  db.capabilities.upsert({ id: 'research.market', name: 'Web Research' });
   db.capabilities.upsert({ id: 'research.market', name: 'Market Research' });
   const custom = createCustomAgent(db, { name: 'Scout', departmentId: 'dept-comms', instructions: 'Research things.', model: '', tools: [], enabled: true });
   return { builtin: builtinId(db), custom: custom.id };
@@ -48,26 +48,26 @@ describe('agent_capabilities: built-in AND custom agents', () => {
     const db = openDb(':memory:');
     const { builtin, custom } = seedAgentsAndCaps(db);
 
-    db.agentCapabilities.assign(builtin, { capabilityId: 'research.web', proficiency: 70 });
-    db.agentCapabilities.assign(custom, { capabilityId: 'research.web' });
+    db.agentCapabilities.assign(builtin, { capabilityId: 'research.market', proficiency: 70 });
+    db.agentCapabilities.assign(custom, { capabilityId: 'research.market' });
     // re-assign (idempotent): updates in place, no duplicate row
-    const re = db.agentCapabilities.assign(builtin, { capabilityId: 'research.web', proficiency: 90 });
+    const re = db.agentCapabilities.assign(builtin, { capabilityId: 'research.market', proficiency: 90 });
     expect(re.proficiency).toBe(90);
     expect(db.agentCapabilities.forAgent(builtin)).toHaveLength(1);
 
-    expect(getCapabilitiesForAgent(db, custom).map((c) => c.id)).toEqual(['research.web']);
-    expect(getAgentsForCapability(db, 'research.web').map((a) => a.agentId).sort()).toEqual([builtin, custom].sort());
+    expect(getCapabilitiesForAgent(db, custom).map((c) => c.id)).toEqual(['research.market']);
+    expect(getAgentsForCapability(db, 'research.market').map((a) => a.agentId).sort()).toEqual([builtin, custom].sort());
 
-    db.agentCapabilities.remove(custom, 'research.web');
+    db.agentCapabilities.remove(custom, 'research.market');
     expect(db.agentCapabilities.forAgent(custom)).toHaveLength(0);
-    expect(getAgentsForCapability(db, 'research.web').map((a) => a.agentId)).toEqual([builtin]);
+    expect(getAgentsForCapability(db, 'research.market').map((a) => a.agentId)).toEqual([builtin]);
   });
 
   test('assignment to an unknown agent is ignored by the registry lookup (not guessed)', () => {
     const db = openDb(':memory:');
-    db.capabilities.upsert({ id: 'research.web', name: 'Web Research' });
-    db.agentCapabilities.assign('ghost-agent', { capabilityId: 'research.web' });
-    expect(getAgentsForCapability(db, 'research.web')).toEqual([]); // ghost not in the roster
+    db.capabilities.upsert({ id: 'research.market', name: 'Web Research' });
+    db.agentCapabilities.assign('ghost-agent', { capabilityId: 'research.market' });
+    expect(getAgentsForCapability(db, 'research.market')).toEqual([]); // ghost not in the roster
   });
 });
 
@@ -75,14 +75,15 @@ describe('resolveAgentsForCapabilities', () => {
   test('all vs any, no-match, safe output only', () => {
     const db = openDb(':memory:');
     const { builtin, custom } = seedAgentsAndCaps(db);
-    db.agentCapabilities.assign(builtin, { capabilityId: 'research.web' });
+    // Two DISTINCT model-only capabilities so `all` vs `any` differ (both no tool requirement).
     db.agentCapabilities.assign(builtin, { capabilityId: 'research.market' });
-    db.agentCapabilities.assign(custom, { capabilityId: 'research.web' });
+    db.agentCapabilities.assign(builtin, { capabilityId: 'data.analyze' });
+    db.agentCapabilities.assign(custom, { capabilityId: 'research.market' });
 
-    const all = resolveAgentsForCapabilities(db, ['research.web', 'research.market'], { mode: 'all' });
+    const all = resolveAgentsForCapabilities(db, ['research.market', 'data.analyze'], { mode: 'all' });
     expect(all.map((m) => m.agentId)).toEqual([builtin]); // only the fully-covered agent
 
-    const any = resolveAgentsForCapabilities(db, ['research.web', 'research.market'], { mode: 'any' });
+    const any = resolveAgentsForCapabilities(db, ['research.market', 'data.analyze'], { mode: 'any' });
     expect(any.map((m) => m.agentId).sort()).toEqual([builtin, custom].sort());
     expect(any.find((m) => m.agentId === builtin)!.score).toBe(2); // coverage
 
@@ -100,14 +101,14 @@ describe('schema is idempotent + existing data unaffected', () => {
   test('re-opening the same file DB re-runs DDL harmlessly and preserves rows', () => {
     const file = path.join(mkdtempSync(path.join(tmpdir(), 'igris-caps-')), 'test.db');
     const db1 = openDb(file);
-    db1.capabilities.upsert({ id: 'research.web', name: 'Web Research' });
+    db1.capabilities.upsert({ id: 'research.market', name: 'Web Research' });
     const agent = allRuntimeAgents(db1)[0].id;
-    db1.agentCapabilities.assign(agent, { capabilityId: 'research.web', proficiency: 60 });
+    db1.agentCapabilities.assign(agent, { capabilityId: 'research.market', proficiency: 60 });
 
     // Second open runs `CREATE TABLE IF NOT EXISTS` again — no error, data intact.
     const db2 = openDb(file);
-    expect(db2.capabilities.all().map((c) => c.id)).toContain('research.web');
-    expect(db2.agentCapabilities.forAgent(agent).map((a) => a.capabilityId)).toEqual(['research.web']);
+    expect(db2.capabilities.all().map((c) => c.id)).toContain('research.market');
+    expect(db2.agentCapabilities.forAgent(agent).map((a) => a.capabilityId)).toEqual(['research.market']);
     // Existing registry behavior still works.
     expect(getAgentById(db2, agent)).toBeTruthy();
   });

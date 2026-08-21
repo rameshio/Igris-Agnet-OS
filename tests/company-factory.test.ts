@@ -22,7 +22,7 @@ const baseSpec = (over: Partial<AgentSpec> = {}): AgentSpec =>
   AgentSpecSchema.parse({
     name: 'Gap Filler',
     instructions: 'Do the thing honestly.',
-    requiredCapabilities: ['research.web'],
+    requiredCapabilities: ['research.market'],
     ...over,
   });
 
@@ -31,10 +31,10 @@ describe('AgentSpecSchema', () => {
     const spec = AgentSpecSchema.parse({
       name: '  Researcher  ',
       instructions: 'Research things.',
-      requiredCapabilities: ['Research.Web', 'data.enrich'],
+      requiredCapabilities: ['Research.Market', 'data.enrich'],
     });
     expect(spec.name).toBe('Researcher'); // trimmed
-    expect(spec.requiredCapabilities).toEqual(['research.web', 'data.enrich']); // lowercased
+    expect(spec.requiredCapabilities).toEqual(['research.market', 'data.enrich']); // lowercased
     expect(spec.tools).toEqual([]);
     expect(spec.model).toBe('');
     expect(spec.description).toBe('');
@@ -128,7 +128,7 @@ describe('safeProposalSummary', () => {
       status: 'pending',
       spec,
       policy: DEFAULT_FACTORY_POLICY,
-      requiredCapabilities: ['research.web'],
+      requiredCapabilities: ['research.market'],
       rationale: 'fills the gap',
       temporary: true,
       maxDepth: 1,
@@ -139,7 +139,7 @@ describe('safeProposalSummary', () => {
     const s = safeProposalSummary(proposal);
     expect(s.agentName).toBe('Gap Filler');
     expect(s.tools).toEqual(['slack']);
-    expect(s.requiredCapabilities).toEqual(['research.web']);
+    expect(s.requiredCapabilities).toEqual(['research.market']);
     // The prompt must not leak through the safe projection.
     expect(JSON.stringify(s)).not.toMatch(/SECRET SYSTEM PROMPT/);
     expect(JSON.stringify(s)).not.toMatch(/allowedTools/);

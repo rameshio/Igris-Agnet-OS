@@ -16,7 +16,9 @@
 import { randomUUID } from 'node:crypto';
 import type { FounderDb } from '@/lib/db';
 import type { CompanyTask } from '@/lib/company/model';
-import { allRuntimeAgents, getAgentById, resolveAgentsForCapabilities } from '@/lib/agents/registry';
+import { allRuntimeAgents, getAgentById, resolveAgentsForCapabilities, agentToolSlugs } from '@/lib/agents/registry';
+import { toolRequirementFor, satisfiesToolRequirement } from '@/lib/agents/capability-tools';
+import { WIRED_TOOL_SLUGS } from '@/lib/agents/agent-tools';
 import { createRuntime, type AgentRuntime } from '@/lib/agents/runtime';
 import { buildAgentPresence } from '@/lib/agents/presence-service';
 import { validateExecutable } from '@/lib/flows/validator';
@@ -29,11 +31,29 @@ import { createArtifact } from '@/lib/company/manager/artifacts';
 export type DispatchResult =
   | { outcome: 'dispatched_agent'; task: CompanyTask; agentRunId: string; ok: boolean; artifactId?: string }
   | { outcome: 'dispatched_workflow'; task: CompanyTask; runId: string }
-  | { outcome: 'capability_gap'; taskId: string; requiredCapabilities: string[]; missingCapabilities: string[]; reason: 'capability_gap' | 'no_target' }
+  | { outcome: 'capability_gap'; taskId: string; requiredCapabilities: string[]; missingCapabilities: string[]; reason: 'capability_gap' | 'no_target'; toolGap?: string[] }
   | { outcome: 'waiting_dependency'; task: CompanyTask }
   | { outcome: 'already_active'; task: CompanyTask };
 
 const TERMINAL: CompanyTask['status'][] = ['completed', 'failed', 'cancelled'];
+
+/**
+ * DISPATCH PREFLIGHT — the capabilities this agent CANNOT actually perform because it
+ * lacks the required, wired tool. Uses canonical tool assignments + the wired registry
+ * (never instructions). Empty ⇒ the agent is genuinely tool-eligible for the task. This
+ * is the last line of defence: it runs even when an agent is directly assigned (bypassing
+ * the resolver) and even if a tool/connection changed after selection.
+ */
+function taskToolGap(db: FounderDb, task: CompanyTask, agentId: string): string[] {
+  const agentTools = agentToolSlugs(db, agentId);
+  const available = new Set(WIRED_TOOL_SLUGS);
+  const unmet: string[] = [];
+  for (const cap of task.requiredCapabilities) {
+    const req = toolRequirementFor(cap);
+    if (req && !satisfiesToolRequirement(req, agentTools, available)) unmet.push(cap);
+  }
+  return unmet;
+}
 
 /** Set the F1 execution pointer without touching status (never overloads runId for agents). */
 function setExecution(db: FounderDb, taskId: string, kind: 'agent' | 'workflow', refId: string): CompanyTask {
@@ -71,9 +91,23 @@ export async function dispatchTask(db: FounderDb, taskId: string, opts: { runtim
   const eligible = task.requiredCapabilities.length ? resolveAgentsForCapabilities(db, task.requiredCapabilities, { mode: 'all' }) : [];
   const eligibleIds = eligible.map((m) => m.agentId);
   const busy = new Set(buildAgentPresence(db).filter((p) => p.state === 'working' || p.state === 'waiting_approval').map((p) => p.agentId));
-  const assignedValid = task.assignedAgentId && getAgentById(db, task.assignedAgentId) ? task.assignedAgentId : undefined;
-  const chosenAgentId = assignedValid ?? selectAgent(eligibleIds, busy) ?? undefined;
+  // A directly-assigned agent must ALSO be tool-eligible — an assignment can never override
+  // a real tool gap (e.g. a stale/pre-fix `research.web` assignment to a tool-less agent).
+  const assignedExists = !!(task.assignedAgentId && getAgentById(db, task.assignedAgentId));
+  const assignedToolGap = assignedExists ? taskToolGap(db, task, task.assignedAgentId!) : [];
+  const assignedValid = assignedExists && assignedToolGap.length === 0 ? task.assignedAgentId : undefined;
+  let chosenAgentId = assignedValid ?? selectAgent(eligibleIds, busy) ?? undefined;
   const hasPublishedWorkflow = !!(task.workflowId && db.flowWorkflows.get(task.workflowId)?.currentVersion != null);
+
+  // Final defensive preflight: never start an agent that lacks a required, wired tool.
+  let toolGapCaps: string[] = [];
+  if (chosenAgentId) {
+    toolGapCaps = taskToolGap(db, task, chosenAgentId);
+    if (toolGapCaps.length) chosenAgentId = undefined; // do NOT dispatch a capability-label-only agent
+  }
+  // If the assigned agent was excluded purely for a tool gap and no alternative was found,
+  // surface the SPECIFIC tool reason rather than a generic capability gap.
+  if (!chosenAgentId && assignedToolGap.length && !toolGapCaps.length) toolGapCaps = assignedToolGap;
 
   const target = chooseDispatchTarget({
     workflowId: task.workflowId,
@@ -84,15 +118,30 @@ export async function dispatchTask(db: FounderDb, taskId: string, opts: { runtim
   });
 
   if (target.kind === 'gap') {
+    // Distinguish a TOOL gap (a required capability is tool-backed but NO agent has the
+    // required wired tool) from a plain capability gap. This keeps the reason honest even
+    // when no agent was pre-assigned — the label can never be satisfied without the tool.
+    const available = new Set(WIRED_TOOL_SLUGS);
+    const unsatisfiableToolCaps = toolGapCaps.length
+      ? toolGapCaps
+      : task.requiredCapabilities.filter((cap) => {
+          const req = toolRequirementFor(cap);
+          return !!req && db.customAgents.all().every((a) => !satisfiesToolRequirement(req, a.tools ?? [], available));
+        });
+    const toolGap = unsatisfiableToolCaps.length > 0;
     appendEvent(db, {
       type: 'CAPABILITY_GAP',
       missionId: task.missionId,
       taskId,
-      summary: `Capability gap: ${task.requiredCapabilities.join(', ') || 'no eligible target'}`,
-      metadata: { reason: target.reason },
+      summary: toolGap
+        ? `Tool gap: ${unsatisfiableToolCaps.join(', ')} requires a tool that is not available`
+        : `Capability gap: ${task.requiredCapabilities.join(', ') || 'no eligible target'}`,
+      metadata: { reason: toolGap ? 'tool_gap' : target.reason },
     });
+    toolGapCaps = unsatisfiableToolCaps;
     // Task stays queued — F1 NEVER creates an agent (that is F2, which consumes this gap).
-    return { outcome: 'capability_gap', taskId, requiredCapabilities: task.requiredCapabilities, missingCapabilities: target.missingCapabilities, reason: target.reason };
+    // No agent run is spent pretending to perform work the agent cannot do.
+    return { outcome: 'capability_gap', taskId, requiredCapabilities: task.requiredCapabilities, missingCapabilities: target.missingCapabilities, reason: target.reason, toolGap: toolGap ? toolGapCaps : undefined };
   }
   if (target.kind === 'workflow') return dispatchWorkflow(db, task, target.workflowId);
   return dispatchAgent(db, task, target.agentId, opts.runtime ?? createRuntime(db, allRuntimeAgents(db)));

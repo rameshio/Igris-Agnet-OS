@@ -18,11 +18,11 @@ type DB = ReturnType<typeof openDb>;
 
 function scenario(db: DB) {
   const agent = createCustomAgent(db, { name: 'Scout', departmentId: 'dept-tech', instructions: 'x', model: '', tools: [], enabled: true });
-  db.capabilities.upsert({ id: 'research.web', name: 'research.web' });
-  db.agentCapabilities.assign(agent.id, { capabilityId: 'research.web' });
+  db.capabilities.upsert({ id: 'research.market', name: 'research.market' });
+  db.agentCapabilities.assign(agent.id, { capabilityId: 'research.market' });
   const mission = createMission(db, { title: 'Market study' });
   const dep = createCompanyTask(db, mission.id, { title: 'Prep' });
-  const task = createCompanyTask(db, mission.id, { title: 'Analyze', requiredCapabilities: ['research.web'] });
+  const task = createCompanyTask(db, mission.id, { title: 'Analyze', requiredCapabilities: ['research.market'] });
   addTaskDependency(db, task.id, dep.id);
   assignTask(db, task.id, agent.id);
   const artifact = createArtifact(db, { missionId: mission.id, taskId: task.id, producedByAgentId: agent.id, type: 'agent_result', title: 'Findings', summary: 's', content: 'body' });
@@ -61,7 +61,7 @@ describe('getRadialNeighborhood — projected edges', () => {
     const g = getRadialNeighborhood(db, { entity: `task:${task.id}` });
     const types = g.edges.map((e) => e.type);
     expect(types).toEqual(expect.arrayContaining(['ASSIGNED_TO', 'PRODUCED', 'DEPENDS_ON', 'REQUIRES', 'HAS_TASK']));
-    expect(g.nodes.map((n) => n.id)).toEqual(expect.arrayContaining([`agent:${agent.id}`, `artifact:${artifact.id}`, `company_task:${dep.id}`, 'capability:research.web']));
+    expect(g.nodes.map((n) => n.id)).toEqual(expect.arrayContaining([`agent:${agent.id}`, `artifact:${artifact.id}`, `company_task:${dep.id}`, 'capability:research.market']));
   });
 
   it('agent node exposes SAFE fields only (no model / no system prompt)', () => {

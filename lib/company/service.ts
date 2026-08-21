@@ -14,6 +14,8 @@ import { ZodError } from 'zod';
 import type { FounderDb } from '@/lib/db';
 import { getAgentById, resolveAgentsForCapabilities } from '@/lib/agents/registry';
 import type { AgentMatch } from '@/lib/agents/capabilities';
+import { toolRequirementFor, satisfiesToolRequirement, toolGapReason } from '@/lib/agents/capability-tools';
+import { WIRED_TOOL_SLUGS } from '@/lib/agents/agent-tools';
 import {
   MissionInputSchema,
   MissionUpdateSchema,
@@ -241,6 +243,27 @@ export function getEligibleAgentsForTask(db: FounderDb, taskId: string): AgentMa
   if (!task) throw new CompanyError('task not found', 404);
   if (task.requiredCapabilities.length === 0) return [];
   return resolveAgentsForCapabilities(db, task.requiredCapabilities, { mode: 'all' });
+}
+
+/**
+ * The EXPLICIT tool gaps for a task — a tool-backed required capability that NO agent can
+ * currently satisfy because the required, wired tool is unavailable. This is why the
+ * eligible list can be empty even though a capability label exists somewhere. Read-only,
+ * SAFE (no connector config/secrets) — just the capability + a plain reason.
+ */
+export function getTaskToolGaps(db: FounderDb, taskId: string): { capabilityId: string; reason: string }[] {
+  const task = db.companyTasks.get(taskId);
+  if (!task) throw new CompanyError('task not found', 404);
+  const available = new Set(WIRED_TOOL_SLUGS);
+  const agents = db.customAgents.all();
+  const gaps: { capabilityId: string; reason: string }[] = [];
+  for (const cap of task.requiredCapabilities) {
+    const req = toolRequirementFor(cap);
+    if (!req) continue; // model-only capability — no tool gap possible
+    const anyAgentSatisfies = agents.some((a) => satisfiesToolRequirement(req, a.tools ?? [], available));
+    if (!anyAgentSatisfies) gaps.push({ capabilityId: cap, reason: toolGapReason(req) });
+  }
+  return gaps;
 }
 
 /**

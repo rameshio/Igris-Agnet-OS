@@ -25,6 +25,27 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-TOOL-BACKED-ELIGIBILITY**
+Phase: Architecture V2 · capability ≠ tool (tool-backed eligibility)
+Summary: Close the false-eligibility gap where a capability LABEL (`research.web`) made an agent eligible even without the actual live-web/search TOOL — the factory promoted it, the manager dispatched it, and the task failed. Eligibility for a tool-backed capability now requires BOTH the capability AND a real, wired tool.
+Reason: Manual E2E: "Collect Daily AI Updates" (research.web) detected a gap → proposed an agent → approved → assigned research.web → dispatched → agent started → FAILED, because the approved agent had no live-web access. Capability was conflated with tool availability.
+Files added: `lib/agents/capability-tools.ts` (pure, generic capability→tool requirement registry + `satisfiesToolRequirement`/`toolGapReason`; `research.web` requires one of web.search/browser.search/web.fetch — none wired → explicit tool gap), `tests/capability-tools.test.ts`.
+Files modified: `lib/agents/capabilities.ts` (`resolveAgents` gained optional `toolCheck`), `lib/agents/registry.ts` (`resolveAgentsForCapabilities` enforces tool requirements by default + `enforceToolRequirements` opt-out + `agentToolSlugs`), `lib/company/factory/model.ts` (`validateSpecAgainstPolicy` rejects a tool-backed capability the factory cannot tool-back), `lib/company/factory/service.ts` (defensive re-validation at promotion), `lib/company/manager/delegation.ts` (dispatch PREFLIGHT — never start a tool-deficient agent; explicit `tool_gap`), `lib/company/service.ts` (`getTaskToolGaps`), `app/api/company-tasks/[id]/eligible-agents/route.ts` (returns `toolGaps`), `components/MissionsBoard.tsx` (shows the tool-gap reason; hides Propose when no grantable tool can satisfy). Migrated placeholder `research.web`→`research.market` (model-only) in F0/F1/F2 mechanic tests that used it as a generic capability.
+Database: no changes — the capability→tool mapping is a controlled code registry (no schema, no migration). Existing agents are NOT mutated.
+Capability requirement behavior: model-only capabilities behave exactly as before (no requirement); a tool-backed capability with `any` mode is satisfied by ≥1 usable required tool, `all` by every required tool; a required tool that is assigned but not WIRED/available is not usable.
+Resolver: a capability counts as matched only if the agent holds the label AND (when enforcing) passes the tool check; ranking/exact-id semantics unchanged. Default enforce ON in `resolveAgentsForCapabilities`; the PURE `resolveAgents` and F6 coverage stay capability-only.
+Factory: a spec whose tool-backed capability cannot be satisfied by a grantable (allow-listed) tool fails policy → propose 400, and promotion re-checks defensively → no silent capability-only agent, no unauthorized tool grant, no invented connector.
+Dispatch preflight: even a directly-assigned agent is tool-checked immediately before execution; a tool gap → CAPABILITY_GAP event with `reason: tool_gap`, task stays queued, NO `AGENT_STARTED`, no agent_run — no LLM run wasted.
+research.web: no web/search tool is wired, so `research.web` is never eligible today; the gap is explicit ("research.web requires a web.search or browser.search or web.fetch tool, but no eligible tool is available"). No browser/web connector was invented.
+UI/API: `GET /api/company-tasks/:id/eligible-agents` returns `{ agents, toolGaps }`; MissionsBoard shows the tool-gap reason and suppresses Propose when tooling cannot satisfy it. No connector config/secret exposed.
+Tests added: `tests/capability-tools.test.ts` (14) — requirement model any/all + availability, resolver capability-label-insufficient + model-only unchanged + opt-out, manual-assign rejection, factory fail-safe + model-only pass, dispatch preflight (no AGENT_STARTED / no run / queued / explicit tool gap), eligible-agents tool-gap reason with no secrets.
+Tests run: `tsc --noEmit` + full `vitest run`.
+Results: 1636 passed (172 files); typecheck clean. Verified live on 4100: the real "Collect Daily AI Updates" (research.web) shows 0 eligible + the tool-gap reason; a fresh research.web dispatch → `tool_gap`, no AGENT_STARTED, task queued; `research.market` (model-only) keeps a working assigned agent. (api.test.ts / seed.test.ts are the known slow flakes — green in isolation.)
+Known limits: exact tool-id matching; one tool-backed capability today (`research.web`, unsatisfiable until a web connector is added + wired + allow-listed); preflight uses structural wiring, not per-connector runtime health.
+Rollback: remove `capability-tools.ts` + its call sites (resolver `toolCheck`, registry enforce, factory check, dispatch preflight, `getTaskToolGaps`, route/UI) and revert the test capability migration; no schema to reverse.
+
+---
+
 Change ID: **V2-ARTIFACT-VIEW-RESULT**
 Phase: Architecture V2 · consolidation follow-up (artifact reading UX)
 Summary: Add a "View Result" artifact-detail experience on `/missions` so the operator can read the full agent/workflow output, not just its title.

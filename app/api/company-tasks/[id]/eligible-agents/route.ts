@@ -9,14 +9,17 @@
  */
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/data';
-import { getEligibleAgentsForTask, companyErrorInfo } from '@/lib/company/service';
+import { getEligibleAgentsForTask, getTaskToolGaps, companyErrorInfo } from '@/lib/company/service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
-    return NextResponse.json({ agents: getEligibleAgentsForTask(getDb(), params.id) });
+    const db = getDb();
+    // `agents` = who is genuinely eligible (capability + required tool). `toolGaps` explains
+    // WHY the list may be empty for a tool-backed capability (safe reason, no connector config).
+    return NextResponse.json({ agents: getEligibleAgentsForTask(db, params.id), toolGaps: getTaskToolGaps(db, params.id) });
   } catch (err) {
     const { status, error } = companyErrorInfo(err);
     return NextResponse.json({ error }, { status });

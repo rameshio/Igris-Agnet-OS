@@ -174,6 +174,21 @@ delegation, no agent creation, **no execution**.
   unassigned rather than guessed), `reportsTo`/lifecycle columns (`parentId`
   already carries reporting today), Missions/Tasks (F0.2), Manager (F1), Factory
   (F2). See `docs/CHANGE-LOG.md` UX/F0.1 record.
+- **Capability ≠ Tool — tool-backed eligibility** (V2 follow-up): a capability is
+  *what an agent CAN do*; a TOOL is the concrete, connector-backed mechanism it uses.
+  A small, generic registry (`lib/agents/capability-tools.ts`) maps ONLY the
+  capabilities that genuinely require a tool (e.g. `research.web` → one of
+  `web.search`/`browser.search`/`web.fetch`; model-only capabilities are unlisted).
+  The resolver (`resolveAgents`) takes an optional `toolCheck`, and
+  `resolveAgentsForCapabilities` enforces it by DEFAULT: an agent is eligible for a
+  tool-backed capability only when it holds the label AND actually has a required,
+  WIRED tool (availability is canonical — the assigned slug is in the wired
+  `agent-tools` registry — never inferred from instructions). The Factory refuses to
+  propose/promote an agent for a tool-backed capability it cannot grant a real tool
+  for; dispatch runs a preflight that never starts a tool-deficient agent (task stays
+  queued with an explicit `tool_gap`). No live web/search tool is wired, so
+  `research.web` is honestly unresolvable today. **No schema change** (a controlled
+  code registry); analytics (F6) uses the capability-only view. See invariant 31.
 
 ### 6c. Mission + Company Task canonical model (Architecture V2 · F0.2) ✅
 

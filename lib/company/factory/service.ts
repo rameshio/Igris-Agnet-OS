@@ -164,6 +164,12 @@ export function promoteProposal(db: FounderDb, proposalId: string, opts: { actor
     throw new CompanyError(`proposal already ${existing.status}`, 409);
   }
 
+  // Defensive re-validation at promotion (registry/policy could have drifted since propose):
+  // a proposal whose tool-backed capabilities can no longer be satisfied by grantable tools
+  // must NOT create an agent. Fail safe BEFORE flipping status — nothing is created.
+  const preflight = validateSpecAgainstPolicy(existing.spec, existing.policy, 1);
+  if (!preflight.ok) throw new CompanyError(`cannot promote — proposed agent violates factory policy: ${preflight.violations.join('; ')}`, 400);
+
   const actor = opts.actor?.trim() || LOCAL_ACTOR;
   const resolved = db.companyAgentProposals.resolve(proposalId, 'approved', actor);
   if (!resolved) {

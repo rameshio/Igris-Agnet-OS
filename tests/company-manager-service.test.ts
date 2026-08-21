@@ -36,10 +36,10 @@ function agentWithCap(db: DB, name: string, cap: string, enabled = true): string
 describe('managerStep', () => {
   test('activates the mission, dispatches agent tasks, completes deterministically', async () => {
     const db = openDb(':memory:');
-    agentWithCap(db, 'Scout', 'research.web');
+    agentWithCap(db, 'Scout', 'research.market');
     const m = createMission(db, { title: 'M' });
-    createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.web'] });
-    createCompanyTask(db, m.id, { title: 'B', requiredCapabilities: ['research.web'] });
+    createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.market'] });
+    createCompanyTask(db, m.id, { title: 'B', requiredCapabilities: ['research.market'] });
 
     const res = await managerStep(db, m.id, { maxSteps: 3 });
     expect(res.mission.status).toBe('completed'); // all tasks completed → mission complete
@@ -49,9 +49,9 @@ describe('managerStep', () => {
 
   test('is bounded by maxSteps (no runaway autonomy)', async () => {
     const db = openDb(':memory:');
-    agentWithCap(db, 'Scout', 'research.web');
+    agentWithCap(db, 'Scout', 'research.market');
     const m = createMission(db, { title: 'M' });
-    for (let i = 0; i < 5; i++) createCompanyTask(db, m.id, { title: `T${i}`, requiredCapabilities: ['research.web'] });
+    for (let i = 0; i < 5; i++) createCompanyTask(db, m.id, { title: `T${i}`, requiredCapabilities: ['research.market'] });
 
     const res = await managerStep(db, m.id, { maxSteps: 2 });
     expect(res.dispatched.length).toBeLessThanOrEqual(2);
@@ -60,9 +60,9 @@ describe('managerStep', () => {
 
   test('a failed task blocks mission completion', async () => {
     const db = openDb(':memory:');
-    agentWithCap(db, 'Broken', 'research.web', /* enabled */ false); // run returns ok:false
+    agentWithCap(db, 'Broken', 'research.market', /* enabled */ false); // run returns ok:false
     const m = createMission(db, { title: 'M' });
-    createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.web'] });
+    createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.market'] });
 
     const res = await managerStep(db, m.id, { maxSteps: 3 });
     expect(res.report.taskCounts.failed).toBe(1);

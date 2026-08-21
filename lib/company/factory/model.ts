@@ -21,6 +21,7 @@
  */
 import { z } from 'zod';
 import { isValidCapabilityId, normalizeCapabilityId } from '@/lib/agents/capabilities';
+import { toolRequirementFor, satisfiesToolRequirement } from '@/lib/agents/capability-tools';
 
 // ── Hard ceilings — a bounded override may only make a policy STRICTER, never
 //    exceed these. They are the outer safety envelope, independent of any override.
@@ -154,6 +155,17 @@ export function validateSpecAgainstPolicy(spec: AgentSpec, policy: FactoryPolicy
   }
   if (depth > policy.maxDepth) violations.push(`creation depth ${depth} exceeds maxDepth ${policy.maxDepth}`);
   if (spec.requiredCapabilities.length === 0) violations.push('at least one required capability is needed');
+  // Tool-backed capability check: a granted capability that REQUIRES a concrete tool must
+  // be satisfied by tools the factory can actually grant (on the policy allow-list). This
+  // stops the factory from ever creating an agent that carries a capability LABEL it cannot
+  // truly perform (e.g. `research.web` with no grantable web tool → fail safe, no agent).
+  const grantable = new Set(policy.allowedTools);
+  for (const capId of spec.requiredCapabilities) {
+    const req = toolRequirementFor(capId);
+    if (req && !satisfiesToolRequirement(req, spec.tools, grantable)) {
+      violations.push(`capability ${capId} requires a tool the factory cannot grant (needs ${req.mode} of [${req.requiredToolIds.join(', ')}]; none are grantable)`);
+    }
+  }
   return { ok: violations.length === 0, violations };
 }
 

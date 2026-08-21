@@ -121,6 +121,14 @@ export function resolveAgents(input: {
   assignments: AgentCapabilityLite[];
   required: string[];
   mode?: ResolveMode;
+  /**
+   * Optional tool-awareness (Architecture V2 · tool-backed eligibility). When provided,
+   * a required capability counts as satisfied only if the agent ALSO passes this check —
+   * i.e. actually has the concrete tool the capability requires. Absent → capability-only
+   * matching (unchanged). The predicate is generic; the resolver stays free of tool/wiring
+   * knowledge (the registry supplies the real check).
+   */
+  toolCheck?: (agentId: string, capabilityId: string) => boolean;
 }): AgentMatch[] {
   const mode = input.mode ?? 'all';
   const required = [...new Set(input.required.map(normalizeCapabilityId))].filter(isValidCapabilityId);
@@ -145,7 +153,13 @@ export function resolveAgents(input: {
     const caps = byAgent.get(agent.id) ?? new Map<string, AgentCapabilityLite>();
     const matched: string[] = [];
     const missing: string[] = [];
-    for (const req of required) (caps.has(req) ? matched : missing).push(req);
+    // A capability is truly matched only when the agent holds the label AND (if a tool
+    // check is supplied) actually has the tool it requires. A has-label-but-no-tool
+    // capability is NOT matched → the agent is not falsely eligible.
+    for (const req of required) {
+      const satisfied = caps.has(req) && (!input.toolCheck || input.toolCheck(agent.id, req));
+      (satisfied ? matched : missing).push(req);
+    }
 
     const eligible = mode === 'all' ? missing.length === 0 : matched.length > 0;
     if (!eligible) continue;

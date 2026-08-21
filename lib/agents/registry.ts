@@ -22,6 +22,8 @@ import {
   type Capability,
   type ResolveMode,
 } from '@/lib/agents/capabilities';
+import { toolRequirementFor, satisfiesToolRequirement } from '@/lib/agents/capability-tools';
+import { WIRED_TOOL_SLUGS } from '@/lib/agents/agent-tools';
 
 export function allRuntimeAgents(db: FounderDb): RuntimeAgent[] {
   return [...realAgents, ...customRuntimeAgents(db)];
@@ -60,16 +62,40 @@ export function getAgentsForCapability(db: FounderDb, capabilityId: string): { a
 }
 
 /**
+ * The tool SLUGS an agent has actually connected (custom-agent config). Built-ins carry
+ * no connector slugs → an empty list. This is the canonical, authoritative source — never
+ * an agent's instructions/description. Availability is then gated by the WIRED registry.
+ */
+export function agentToolSlugs(db: FounderDb, agentId: string): string[] {
+  return db.customAgents.get(agentId)?.tools ?? [];
+}
+
+/**
  * Resolve eligible agents for the required capabilities (default mode `all`).
- * Deterministic, exact-id matching only — the reusable seam the F1 Manager will
- * call. Returns SAFE metadata only (id/name/matched/missing/proficiency/score);
- * it never starts, assigns, or delegates work.
+ * Deterministic, exact-id matching only — the reusable seam the F1 Manager calls.
+ *
+ * **Tool-backed eligibility (default ON):** an agent is eligible for a capability only
+ * when it holds the capability AND, for any capability that REQUIRES a concrete tool,
+ * actually has that tool available/wired (never inferred from prose). This closes the
+ * "capability label without a real tool" false-eligibility gap. Pass
+ * `enforceToolRequirements: false` for a capability-only view (e.g. analytics coverage).
+ * Returns SAFE metadata only; it never starts, assigns, or delegates work.
  */
 export function resolveAgentsForCapabilities(
   db: FounderDb,
   required: string[],
-  opts: { mode?: ResolveMode } = {},
+  opts: { mode?: ResolveMode; enforceToolRequirements?: boolean } = {},
 ): AgentMatch[] {
   const agents = allRuntimeAgents(db).map((a) => ({ id: a.id, name: a.name }));
-  return resolveAgents({ agents, assignments: db.agentCapabilities.all(), required, mode: opts.mode });
+  let toolCheck: ((agentId: string, capabilityId: string) => boolean) | undefined;
+  if (opts.enforceToolRequirements !== false) {
+    const available = new Set(WIRED_TOOL_SLUGS);
+    const toolsById = new Map(db.customAgents.all().map((a) => [a.id, a.tools ?? []]));
+    toolCheck = (agentId, capId) => {
+      const req = toolRequirementFor(capId);
+      if (!req) return true; // model-only capability — no tool needed
+      return satisfiesToolRequirement(req, toolsById.get(agentId) ?? [], available);
+    };
+  }
+  return resolveAgents({ agents, assignments: db.agentCapabilities.all(), required, mode: opts.mode, toolCheck });
 }
