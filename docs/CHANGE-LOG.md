@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-PRESERVED-PROVENANCE**
+Phase: Architecture V2 · preserved provenance to deleted canonical artifacts + CLI ref formatting
+Summary: Represent a G-Brain canonical reference to a DELETED artifact honestly (state `missing` / Inspector `source_deleted`) instead of a 404, and render nested canonicalRefs readably in the CLI (`kind:id`, never `[object Object]`). Never restore artifacts, never delete promoted knowledge, never weaken cleanup.
+Reason: Manual CLI testing: entity `bent-6bacd337…` (canonicalRef `artifact:artifact-fe59708d…`) has intact G-Brain provenance, but `igris artifact show <that artifact>` returned "artifact not found" and `igris brain entity` printed `canonicalRef [object Object]`. Root cause: mission cleanup (`deleteTestMission`) deletes the Company Artifact but INTENTIONALLY preserves brain_entities/sources/knowledge — an honest dangling ref the surfaces didn't handle.
+Files added: `lib/brain/core/provenance.ts` (`canonicalRefState` → live|missing), `tests/preserved-provenance.test.ts`.
+Files modified: `app/api/brain/entities/[id]/route.ts` (additive `canonicalState`), `lib/brain/inspector/service.ts` (artifact case → `inspectMissingArtifact` source_deleted view when deleted-but-preserved; real 404 only when nothing references it), `lib/brain/inspector/model.ts` (+`open_brain` closed action id), `lib/cli/output.ts` (`formatRefValue`), `lib/cli/commands/brain.ts` (entity renders kind:id + canonicalState + missing note; neighborhood resolves endpoint names), `lib/cli/commands/company.ts` (artifact show 404 → clear missing message + brain-search hint, non-zero), `tests/cli.test.ts`.
+Database: no changes — `canonicalState` is computed on read; the requirement mapping is unchanged. No migration.
+Behavior: brain-entity API returns an honest `canonicalState`; the Inspector shows a `source_deleted` view with preserved agent/task/knowledge provenance and NO fabricated artifact/content; the CLI renders canonicalRef as `kind:id` (human) while `--json` stays structured, and `artifact show` on a deleted id fails clearly pointing at `brain search`.
+Preservation: mission cleanup unchanged — brain_knowledge/brain_sources/brain_entities are never deleted, and no deleted artifact is reconstructed.
+Tests added: 9 (canonical state live/missing, cleanup preserves knowledge + relationships, Inspector source_deleted view, no reconstruction/no content leak, real 404 for unknown id; CLI kind:id formatting, structured JSON, neighborhood names, artifact-show missing message).
+Tests run: `tsc --noEmit`; targeted provenance/inspector/CLI + full suite.
+Results: **1685 passed (177 files)**; typecheck clean. Verified live on 4100 with the real case: `brain entity bent-6bacd337…` → `canonicalRef artifact:artifact-fe59708d…` + `canonicalState missing` + note; `brain neighborhood` → Agent/Task PRODUCED + Knowledge DERIVED_FROM with names; `GET /api/brain/inspect?kind=artifact&id=…` → `source_deleted` (not 404); `artifact show …` → clear missing + exit 2; promoted knowledge still found by `brain search`.
+Known limits: CLI `artifact show` gives a generic missing-source hint (no reverse BrainSource lookup — deliberately no new reverse endpoint); `canonicalState` is live|missing only (no separate archived state this pass).
+Rollback: pure code rollback (no schema) — revert the files above.
+
+---
+
 Change ID: **V2-CLI-MODEL-CONTROL-PLANE**
 Phase: Architecture V2 · IGRIS CLI + unified multi-provider model control plane
 Summary: Add `igris`, a terminal CONTROL SURFACE over the canonical HTTP API, and EXTEND the already-unified model runtime with honest capability metadata, a canonical global default model, and a read-only company `ask` path. Not a parallel OS: the CLI never touches SQLite and never bypasses U3/Phase-E; providers share one runtime; no silent fallback.

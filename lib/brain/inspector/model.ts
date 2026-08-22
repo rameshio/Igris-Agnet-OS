@@ -16,7 +16,7 @@ export type InspectorSection = { title: string; rows: InspectorRow[] };
 /** Closed action ids — the ONLY actions the Inspector may offer. */
 export const INSPECTOR_ACTION_IDS = [
   'open_agent', 'open_org', 'open_mission', 'open_flows', 'open_approvals', 'open_artifact_mission',
-  'promote_artifact', 'archive_knowledge',
+  'open_brain', 'promote_artifact', 'archive_knowledge',
 ] as const;
 export type InspectorActionId = (typeof INSPECTOR_ACTION_IDS)[number];
 

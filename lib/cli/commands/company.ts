@@ -186,7 +186,16 @@ async function artifactShow(ctx: Ctx): Promise<number> {
   const id = ctx.args[1];
   if (!id) return invalid(ctx, 'usage: artifact show <id>');
   const res = await ctx.client.get<{ artifact?: { title: string; type: string; content?: unknown; summary?: string; producedByAgentId?: string } }>(`/api/company-artifacts/${id}`);
-  if (!res.ok) return reportApiError(ctx, res.status, res.data);
+  if (!res.ok) {
+    // A deleted Company Artifact (e.g. mission cleanup) fails clearly — and we never
+    // substitute promoted G-Brain content for it. The canonical ownership stays distinct.
+    if (res.status === 404) {
+      ctx.io.err(`error: artifact ${id} not found in Company Core (it may have been cleaned up).`);
+      ctx.io.err(`Promoted G-Brain knowledge/provenance may still exist. Try:  igris brain search "${id}"`);
+      return EXIT.INVALID_INPUT;
+    }
+    return reportApiError(ctx, res.status, res.data);
+  }
   const a = res.data.artifact!;
   const content = typeof a.content === 'string' ? a.content : JSON.stringify(a.content, null, 2);
   const human = [kv([['Artifact', a.title], ['Type', a.type], ['Produced by', a.producedByAgentId ?? '—']]), '', a.summary ? `Summary: ${a.summary}\n` : '', 'Result:', content ?? '—'].join('\n');

@@ -14,9 +14,53 @@ import { getMission, getCompanyTask, getTaskDependencies } from '@/lib/company/s
 import { missionReport } from '@/lib/company/manager/service';
 import { getArtifact } from '@/lib/company/manager/artifacts';
 import { getKnowledge } from '@/lib/brain/core/knowledge';
+import { neighborhood } from '@/lib/brain/core/relationships';
+import { canonicalKey } from '@/lib/brain/core/model';
 import { isInspectorKind, type InspectorAction, type InspectorSection, type InspectorView } from '@/lib/brain/inspector/model';
 
 const openMission = (): InspectorAction => ({ id: 'open_mission', kind: 'navigate', label: 'Open in Missions', href: '/missions' });
+
+const SOURCE_DELETED_MESSAGE =
+  'Original Company Artifact is no longer available. Durable G-Brain provenance and promoted Knowledge are preserved.';
+
+/**
+ * The canonical Company Artifact was deleted (e.g. mission cleanup) but G-Brain preserved
+ * its provenance. Show an HONEST `source_deleted` view — the preserved relationships
+ * (agent/task PRODUCED, knowledge DERIVED_FROM) and knowledge titles — never fabricating
+ * the artifact or its content. If nothing in G-Brain references it, it is a real 404.
+ */
+function inspectMissingArtifact(db: FounderDb, id: string): InspectorView {
+  const key = canonicalKey('artifact', id);
+  const entity = db.brainEntities.getByCanonicalKey(key);
+  const source = db.brainSources.getByCanonicalKey(key);
+  if (!entity && !source) throw new BrainError('artifact not found', 404);
+
+  const provenance: { label: string; value: string }[] = [];
+  if (entity) {
+    const nb = neighborhood(db, entity.id);
+    const nameById = new Map(nb.neighbors.map((n) => [n.id, n.name] as const));
+    for (const r of nb.relationships) {
+      const outbound = r.fromEntityId === entity.id;
+      const otherId = outbound ? r.toEntityId : r.fromEntityId;
+      provenance.push({ label: r.type, value: `${outbound ? '→' : '←'} ${nameById.get(otherId) ?? otherId}` });
+    }
+  }
+  if (source) for (const k of db.brainKnowledge.bySource(source.id)) provenance.push({ label: 'Knowledge', value: k.title });
+
+  const sections: InspectorSection[] = [
+    { title: 'Overview', rows: [
+      { label: 'State', value: 'source_deleted' },
+      { label: 'Message', value: SOURCE_DELETED_MESSAGE },
+      { label: 'Canonical source', value: `artifact:${id}` },
+    ] },
+    { title: 'Preserved provenance', rows: provenance.length ? provenance : [{ label: '(none preserved)', value: '' }] },
+  ];
+  return {
+    entity: { id: `artifact:${id}`, kind: 'artifact', label: entity?.name ?? source?.title ?? 'Deleted artifact', status: 'source_deleted' },
+    sections,
+    actions: [{ id: 'open_brain', kind: 'navigate', label: 'Open in G-Brain', href: '/brain' }],
+  };
+}
 
 export function inspectEntity(db: FounderDb, input: { kind: string; id: string }): InspectorView {
   const kind = input.kind === 'company_task' ? 'task' : input.kind;
@@ -72,7 +116,9 @@ export function inspectEntity(db: FounderDb, input: { kind: string; id: string }
     }
     case 'artifact': {
       const ar = getArtifact(db, id);
-      if (!ar) throw new BrainError('artifact not found', 404);
+      // Deleted canonical artifact with preserved G-Brain provenance → honest source_deleted
+      // view instead of throwing (never fabricate the artifact). Truly-unknown id → 404.
+      if (!ar) return inspectMissingArtifact(db, id);
       const sections: InspectorSection[] = [
         { title: 'Overview', rows: [{ label: 'Type', value: ar.type }, ...(ar.summary ? [{ label: 'Summary', value: ar.summary }] : [])] },
         { title: 'Provenance', rows: [

@@ -174,3 +174,46 @@ describe('secret redaction', () => {
     expect(r.stdout).toMatch(/\[redacted\]/);
   });
 });
+
+describe('canonicalRef formatting + missing-source handling', () => {
+  it('brain entity renders canonicalRef as kind:id (never [object Object]) + missing note', async () => {
+    const fetchImpl = mockFetch({
+      'GET /api/brain/entities/bent-1': { status: 200, data: { entity: { id: 'bent-1', type: 'artifact', name: 'Define Top AI Scope — result', canonicalRef: { kind: 'artifact', id: 'artifact-fe59' } }, canonicalState: 'missing' } },
+    });
+    const r = await runCaptured(['brain', 'entity', 'bent-1'], { fetchImpl });
+    expect(r.code).toBe(EXIT.OK);
+    expect(r.stdout).toContain('artifact:artifact-fe59');
+    expect(r.stdout).not.toContain('[object Object]');
+    expect(r.stdout).toMatch(/canonicalState/);
+    expect(r.stdout).toMatch(/no longer exists/);
+  });
+
+  it('brain entity --json keeps canonicalRef structured', async () => {
+    const fetchImpl = mockFetch({
+      'GET /api/brain/entities/bent-1': { status: 200, data: { entity: { id: 'bent-1', canonicalRef: { kind: 'artifact', id: 'artifact-fe59' } }, canonicalState: 'missing' } },
+    });
+    const r = await runCaptured(['brain', 'entity', 'bent-1', '--json'], { fetchImpl });
+    expect(r.code).toBe(EXIT.OK);
+    const out = JSON.parse(r.stdout);
+    expect(out.entity.canonicalRef).toEqual({ kind: 'artifact', id: 'artifact-fe59' });
+  });
+
+  it('brain neighborhood renders neighbor names for provenance edges', async () => {
+    const fetchImpl = mockFetch({
+      'GET /api/brain/entities/bent-1/relationships': { status: 200, data: { entity: { id: 'bent-1', name: 'Artifact' }, relationships: [{ type: 'PRODUCED', fromEntityId: 'bent-agent', toEntityId: 'bent-1' }], neighbors: [{ id: 'bent-agent', name: 'AI Scope Analyst' }] } },
+    });
+    const r = await runCaptured(['brain', 'neighborhood', 'bent-1'], { fetchImpl });
+    expect(r.code).toBe(EXIT.OK);
+    expect(r.stdout).toMatch(/PRODUCED/);
+    expect(r.stdout).toContain('AI Scope Analyst');
+    expect(r.stdout).toContain('Artifact');
+  });
+
+  it('artifact show for a deleted id fails clearly and points to brain search', async () => {
+    const fetchImpl = mockFetch({ 'GET /api/company-artifacts/artifact-fe59': { status: 404, data: { error: 'artifact not found' } } });
+    const r = await runCaptured(['artifact', 'show', 'artifact-fe59'], { fetchImpl });
+    expect(r.code).toBe(EXIT.INVALID_INPUT); // non-zero
+    expect(r.stderr).toMatch(/Company Core/);
+    expect(r.stderr).toMatch(/brain search/);
+  });
+});

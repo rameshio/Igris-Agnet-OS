@@ -99,3 +99,20 @@ output. Optional non-secret CLI config may live in `~/.igris/config.json` (`base
 **No silent fallback:** a configured model that fails returns an explicit provider/runtime
 error (e.g. `auth_failed`, `hermes_unavailable`, `model_capability_mismatch`). The CLI
 surfaces it; it never quietly retries on a different provider.
+
+## Canonical references + preserved provenance
+
+`igris brain entity <id>` renders a nested `canonicalRef` readably as `kind:id`
+(e.g. `artifact:artifact-fe59…`) — never `[object Object]` — and shows a `canonicalState`
+of `live` or `missing`. A `missing` state (the canonical object was deleted, e.g. by mission
+cleanup, while durable G-Brain knowledge/provenance is preserved) prints an explicit note.
+`--json` output is unchanged (the structured `canonicalRef` object is preserved).
+
+`igris brain neighborhood <id>` resolves edge endpoints to entity names, so provenance reads
+as `PRODUCED  Agent → Artifact` / `DERIVED_FROM  Knowledge → Artifact`.
+
+`igris artifact show <deleted-id>` fails clearly ("not found in Company Core … it may have
+been cleaned up") with a non-zero exit and points to `igris brain search "<id>"`. It never
+substitutes promoted G-Brain content for the deleted artifact — canonical ownership stays
+distinct. In the web Universal Inspector, opening such an artifact shows a `source_deleted`
+view with the preserved provenance, not a broken 404.

@@ -55,3 +55,17 @@ export function kv(pairs: [string, string | number | null | undefined][]): strin
   const w = Math.max(0, ...pairs.map(([k]) => k.length));
   return pairs.map(([k, v]) => `${k.padEnd(w)}  ${v ?? '—'}`).join('\n');
 }
+
+/**
+ * Render a value for HUMAN output. A canonical reference object `{ kind, id }` becomes a
+ * readable `kind:id` (never `[object Object]`); other objects fall back to compact JSON;
+ * scalars stringify. JSON output uses the raw value untouched (structured), never this.
+ */
+export function formatRefValue(v: unknown): string {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    if (typeof o.kind === 'string' && typeof o.id === 'string') return `${o.kind}:${o.id}`;
+    return JSON.stringify(v);
+  }
+  return v === null || v === undefined ? '—' : String(v);
+}

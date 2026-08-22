@@ -582,6 +582,17 @@ this into **ONE brain**.
 - **Not changed:** the F3 canonical DB, explicit-only artifact→knowledge promotion (drawing never
   auto-ingests), the F4/F5 projection SERVICES (reused by the adapter + inspect), and the external
   gbrain-store viz (`BrainCore`/`BrainViz`) which stays below as brain-store status.
+- **Preserved provenance to a deleted canonical object (honest missing-source handling).** Because
+  cleanup deletes a Company Artifact but keeps its promoted knowledge/source/entity, a G-Brain
+  `canonicalRef` can legitimately point at a deleted object. `lib/brain/core/provenance.ts`
+  `canonicalRefState` reports `live`/`missing` (reusing `resolveCanonicalRef`); `GET /api/brain/entities/:id`
+  returns an additive `canonicalState`; and the Universal Inspector's `artifact` case shows a
+  `source_deleted` view (`inspectMissingArtifact` — the preserved agent/task PRODUCED + knowledge
+  DERIVED_FROM edges) when the artifact is deleted-but-preserved, a real 404 only when nothing
+  references it. The deleted artifact/content is NEVER reconstructed or resurfaced; canonical
+  ownership stays distinct (G-Brain knowledge is not substituted for the artifact). The CLI mirrors
+  this: `kind:id` ref formatting, a missing note, and a clear `artifact show` failure that points to
+  `brain search`.
 
 ---
 
