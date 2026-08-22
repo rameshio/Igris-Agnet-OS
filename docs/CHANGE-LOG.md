@@ -25,6 +25,24 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-CLI-MODEL-CONTROL-PLANE**
+Phase: Architecture V2 · IGRIS CLI + unified multi-provider model control plane
+Summary: Add `igris`, a terminal CONTROL SURFACE over the canonical HTTP API, and EXTEND the already-unified model runtime with honest capability metadata, a canonical global default model, and a read-only company `ask` path. Not a parallel OS: the CLI never touches SQLite and never bypasses U3/Phase-E; providers share one runtime; no silent fallback.
+Reason: Operator wants terminal control + multi-provider (OpenAI/Anthropic/Gemini/Gateway/Hermes) LLM selection. Inspection showed the runtime was ALREADY unified (`lib/models/*` catalog + `routeModel`, one OpenAI-compatible client, no silent fallback), so the task was to reuse/extend it and add a CLI, not build a second stack.
+Files added: `cli/igris.ts`, `bin/igris.js`, `lib/cli/{client,config,output,exit,context,prompt,router,shell}.ts` + `lib/cli/commands/{status,models,company,brain,flow,ask}.ts`; `lib/models/{capabilities,default-model}.ts`; `lib/conductor/ask.ts`; `app/api/models/providers/route.ts`, `app/api/models/default/route.ts`, `app/api/conductor/ask/route.ts`; `docs/CLI.md`; tests `tests/{cli,models-control-plane,conductor-ask}.test.ts`.
+Files modified: `package.json` (`bin` + `cli` script), `lib/models/types.ts` (+`model_capability_mismatch` code), `tests/smoke-api.test.ts` (register the two new GET routes).
+Database: no changes — the global default lives in the existing `meta` KV (`default_model`).
+API: added `GET /api/models/providers` (key-free provider status + capabilities + default), `GET/POST /api/models/default` (canonical global default), `POST /api/conductor/ask` (read-only company-grounded query). Existing `/api/models` + `/models` UI unchanged.
+Behavior: `igris <group> …` drives status/models/ask/mission/task/artifact/brain/intelligence/flow/approvals over HTTP; reads print human text or `--json`; mutations preview→confirm (or `--yes`, never bypassing Phase-E); exit codes 0/1/2/3/4. Model selection hierarchy: run override → agent model → global default → brain. Capability guard rejects a tool-incompatible model (`MODEL_CAPABILITY_MISMATCH`). No provider fallback is silent.
+Security: no API key is ever returned to the CLI/browser (providers endpoint = status only); CLI redacts secrets from all output; `~/.igris/config.json` holds non-secret values only (credential-looking fields ignored); the CLI never opens SQLite.
+Tests added: 27 (CLI router/commands with a mock client incl. confirmation gate, `--yes`, approval routing, server-unavailable, secret redaction; capability metadata; meta-backed default + hierarchy; ask context + routing + honest error).
+Tests run: `tsc --noEmit`; targeted CLI/model/ask + smoke-api; full suite.
+Results: **1676 passed (176 files)**; typecheck clean. Verified live on 4100: `status`/`models providers` (accurate config, no keys), `mission list`, `intelligence --window 7d`, `brain search`, `artifact show` (full readable result), `models use → current → revert` (meta-persisted), `--json`, the confirmation gate (non-TTY, no `--yes` → exit 4, nothing created), server-unavailable (dead port → exit 3), and `ask` surfacing an honest provider error (no silent fallback). No throwaway data persisted.
+Known limits: CLI targets a running server (no auto-launch); fixed-provider tool EXECUTION still routes through the gateway/brain runtime (capability guard prevents an incompatible selection but tool-calling wiring was not re-plumbed); `models use` changes the observable default (ask path), not persisted per-agent assignments; a live provider completion needs the operator's key.
+Rollback: pure code rollback (no schema) — revert the files above + the `package.json` bin/script; the model runtime and UI return to prior behavior.
+
+---
+
 Change ID: **V2-WEB-SEARCH-TOOL**
 Phase: Architecture V2 · make `research.web` a REAL, tool-backed capability
 Summary: Wire a genuine live web/search tool (Tavily, search-only) behind `research.web`, so an agent with the tool is truly eligible, dispatch preflight passes, and the agent can retrieve current public info and cite sources. Follows V2-TOOL-BACKED-ELIGIBILITY, which correctly left `research.web` unresolved because no web connector existed.

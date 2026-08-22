@@ -655,6 +655,37 @@ contract and the **no-silent-fallback** invariant are unchanged.
 > though IGRIS never wrote to G-Brain. How private/company/temporary sessions should interact with
 > Hermes's persistent memory is an **open product decision required before serve reaches users** (pre-H3).
 
+### 7.2 IGRIS CLI + multi-provider control plane ✅
+
+`igris` is a terminal **control surface**, not a second system: it speaks only to the
+canonical HTTP API (`Operator → igris → /api/… → services → routeModel → provider`),
+never opens SQLite, never re-implements mission/task logic, and never bypasses U3
+preview/confirm or Phase-E approval. Entry `cli/igris.ts` (run via `npm run cli` or the
+`bin/igris.js` tsx launcher); logic in `lib/cli/*` (HTTP-only `client`, non-secret
+`config`, human/`--json` `output` with secret redaction, `router`, readline `shell`,
+`commands/*`). Mutations preview → confirm (or `--yes`, which still cannot bypass Phase-E);
+exit codes `0/1/2/3/4`.
+
+The **multi-provider runtime was already unified** (§7 + the Model Router): OpenAI,
+Anthropic, Google Gemini, xAI, DeepSeek, Groq, Mistral, OpenRouter, Together, NVIDIA,
+Ollama, Custom — all via one OpenAI-compatible client — plus the AI Gateway and Hermes
+brains. This work **extended** it, not rebuilt it:
+- `lib/models/capabilities.ts` — honest per-provider capability metadata
+  (`text`/`tool_calling`/`structured_output`/`vision`) + `assertModelCapability`
+  (`MODEL_CAPABILITY_MISMATCH`).
+- `lib/models/default-model.ts` — the canonical, `meta`-backed **global default model**
+  and the selection hierarchy: **run override → agent model → global default → brain**.
+- `lib/conductor/ask.ts` + `POST /api/conductor/ask` — a **read-only**, company-grounded
+  operator query, answered through `routeModel` (no silent fallback).
+- `GET /api/models/providers` (key-free status), `GET/POST /api/models/default`.
+
+**Provider ≠ Model ≠ Runtime Transport ≠ Agent.** Feature code never instantiates a
+provider SDK directly; there is **no silent fallback** (a failed model returns an explicit
+`ModelRouteError`). Provider API keys stay server-side in `.env.local` and are never
+returned to the CLI/browser; the CLI redacts secrets defensively. "Codex" is an OpenAI
+model reached through the provider path — the Codex CLI binary is never a dependency. See
+`docs/CLI.md`.
+
 ### HRA-2 (Hermes Runtime Architecture V2) status
 
 | Checkpoint | State |

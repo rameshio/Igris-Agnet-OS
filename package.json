@@ -4,6 +4,9 @@
   "private": true,
   "description": "IGRIS AGENT — personal operating system and AI agent command center",
   "license": "MIT",
+  "bin": {
+    "igris": "bin/igris.js"
+  },
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 4100",
     "build": "next build",
@@ -12,7 +15,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "seed": "tsx scripts/seed.ts",
-    "brain:docs": "tsx scripts/generate-brain-docs.ts"
+    "brain:docs": "tsx scripts/generate-brain-docs.ts",
+    "cli": "tsx cli/igris.ts"
   },
   "dependencies": {
     "@notionhq/client": "^5.22.0",

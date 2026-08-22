@@ -30,6 +30,8 @@ const ROUTES: RouteEntry[] = [
   { route: 'agents/work', load: () => import('@/app/api/agents/work/route'), url: 'http://localhost/api/agents/work?agentId=data-agent' },
   { route: 'brain', load: () => import('@/app/api/brain/route'), url: 'http://localhost/api/brain' },
   { route: 'models', load: () => import('@/app/api/models/route'), url: 'http://localhost/api/models' },
+  { route: 'models/providers', load: () => import('@/app/api/models/providers/route'), url: 'http://localhost/api/models/providers' },
+  { route: 'models/default', load: () => import('@/app/api/models/default/route'), url: 'http://localhost/api/models/default' },
   { route: 'flows', load: () => import('@/app/api/flows/route'), url: 'http://localhost/api/flows' },
   { route: 'home', load: () => import('@/app/api/home/route'), url: 'http://localhost/api/home' },
   { route: 'flow-approvals', load: () => import('@/app/api/flow-approvals/route'), url: 'http://localhost/api/flow-approvals' },

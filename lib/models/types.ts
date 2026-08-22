@@ -38,6 +38,7 @@ export type ModelErrorCode =
   | 'network_error'
   | 'hermes_unavailable'
   | 'unsupported_strategy'
+  | 'model_capability_mismatch'
   | 'auto_not_implemented';
 
 export class ModelRouteError extends Error {
