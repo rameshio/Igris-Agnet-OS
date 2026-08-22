@@ -16,6 +16,7 @@ export type ConnectorKind =
   | 'creative'
   | 'knowledge'
   | 'local'
+  | 'web'
   | 'orchestration';
 
 export type ConnectorStatus = {

@@ -177,18 +177,30 @@ delegation, no agent creation, **no execution**.
 - **Capability ≠ Tool — tool-backed eligibility** (V2 follow-up): a capability is
   *what an agent CAN do*; a TOOL is the concrete, connector-backed mechanism it uses.
   A small, generic registry (`lib/agents/capability-tools.ts`) maps ONLY the
-  capabilities that genuinely require a tool (e.g. `research.web` → one of
-  `web.search`/`browser.search`/`web.fetch`; model-only capabilities are unlisted).
-  The resolver (`resolveAgents`) takes an optional `toolCheck`, and
-  `resolveAgentsForCapabilities` enforces it by DEFAULT: an agent is eligible for a
-  tool-backed capability only when it holds the label AND actually has a required,
-  WIRED tool (availability is canonical — the assigned slug is in the wired
-  `agent-tools` registry — never inferred from instructions). The Factory refuses to
-  propose/promote an agent for a tool-backed capability it cannot grant a real tool
-  for; dispatch runs a preflight that never starts a tool-deficient agent (task stays
-  queued with an explicit `tool_gap`). No live web/search tool is wired, so
-  `research.web` is honestly unresolvable today. **No schema change** (a controlled
-  code registry); analytics (F6) uses the capability-only view. See invariant 31.
+  capabilities that genuinely require a tool (`research.web` → the real `web.search`
+  tool; model-only capabilities are unlisted). The resolver (`resolveAgents`) takes an
+  optional `toolCheck`, and `resolveAgentsForCapabilities` enforces it by DEFAULT: an
+  agent is eligible for a tool-backed capability only when it holds the label AND
+  actually has a required, WIRED tool (availability is canonical — the assigned slug is
+  in the wired `agent-tools` registry — never inferred from instructions). The Factory
+  refuses to propose/promote an agent for a tool-backed capability it cannot grant a
+  real tool for; dispatch runs a preflight that never starts a tool-deficient agent
+  (task stays queued with an explicit `tool_gap`). **`research.web` is now a REAL,
+  tool-backed capability:** `web.search` is a live connector (Tavily, search-only —
+  `lib/connectors/websearch.ts`), wired into the agent tool REGISTRY and on the Factory
+  allow-list. An agent that carries `web.search` (and, at run time, a set `TAVILY_API_KEY`)
+  can retrieve current public information and cite sources; when no agent has the tool —
+  or the key is unset — `research.web` stays an honest, explicit tool gap. **No schema
+  change** (a controlled code registry); analytics (F6) uses the capability-only view.
+  See invariant 31 and §6b-web below.
+
+  **§6b-web — the web/search tool.** `web.search` is search-only by design: it returns a
+  bounded list of public results (title/url/snippet/source) so the agent can *retrieve*
+  current information, and it exposes NO arbitrary-URL fetch — so there is no SSRF surface
+  in this pass (a future `fetchWebPage` would need the full SSRF blocklist before it could
+  ship). It fails honestly: no `TAVILY_API_KEY` ⇒ setup guidance and no network call; a
+  provider/timeout error surfaces the real status instead of silently falling back to
+  unsourced model knowledge. The key is resolved from env only, never copied into the repo.
 
 ### 6c. Mission + Company Task canonical model (Architecture V2 · F0.2) ✅
 

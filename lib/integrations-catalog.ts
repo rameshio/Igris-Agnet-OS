@@ -89,6 +89,9 @@ export const INTEGRATIONS: Integration[] = [
   // Shared memory that connects agents together — any agent with this can read
   // and write the common G-Brain. Backed by the real `gbrain` connector.
   { slug: 'gbrain', name: 'G-Brain', tagline: 'Shared agent memory (read + write)', category: 'AI & Automation', connectorId: 'gbrain', popular: true, envKeys: [] },
+  // Live public web search (Tavily). The REAL tool behind the `research.web`
+  // capability — an agent with it can retrieve current public info and cite sources.
+  { slug: 'web.search', name: 'Web Search', tagline: 'Live public web search (research.web)', category: 'AI & Automation', popular: true, connectorId: 'websearch', envKeys: ['TAVILY_API_KEY'] },
   { slug: 'openai', name: 'OpenAI', tagline: 'GPT models & embeddings', category: 'AI & Automation' },
   { slug: 'anthropic', name: 'Anthropic', tagline: 'Claude models', category: 'AI & Automation', popular: true },
   { slug: 'zapier', name: 'Zapier', tagline: 'Automate anything', category: 'AI & Automation' },

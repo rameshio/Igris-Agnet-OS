@@ -51,6 +51,7 @@ const LETTERMARK: Record<string, string> = {
   'ai-gateway': '#7C5CFF',
   hermes: '#C9A227',
   gbrain: '#3df08c',
+  'web.search': '#4C8BF5',
   plaid: '#000000',
   onedrive: '#0078D4',
   canva: '#00C4CC',

@@ -7,9 +7,10 @@
  * dispatch preflight, and the eligible-agents API — with `research.web` as the regression
  * case (no web/search tool is wired, so it stays an explicit TOOL GAP).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { openDb } from '@/lib/db';
 import { createCustomAgent } from '@/lib/agents/custom';
+import { agentToolSpecsFor, WIRED_TOOL_SLUGS } from '@/lib/agents/agent-tools';
 import { createMission, createCompanyTask, getEligibleAgentsForTask, getTaskToolGaps, assignTask, CompanyError } from '@/lib/company/service';
 import { resolveAgentsForCapabilities } from '@/lib/agents/registry';
 import { dispatchTask } from '@/lib/company/manager/delegation';
@@ -65,11 +66,20 @@ describe('capability tool-requirement model', () => {
     expect(usableRequiredTools(req, ['slack'], available)).toEqual(['slack']);
   });
 
-  it('research.web is never satisfiable today (no web tool wired) — explicit reason', () => {
+  it('research.web requires the real web.search tool — assigned AND wired', () => {
     const req = toolRequirementFor('research.web')!;
-    // even if an agent merely lists the slug, it is not wired/available → not usable
+    expect(req.requiredToolIds).toEqual(['web.search']);
+    // listing the slug is not enough if it is not wired/available in the given set
     expect(satisfiesToolRequirement(req, ['web.search'], new Set(['slack', 'gmail', 'gbrain']))).toBe(false);
-    expect(toolGapReason(req)).toMatch(/research\.web requires/);
+    // assigned AND wired/available → satisfied
+    expect(satisfiesToolRequirement(req, ['web.search'], new Set(['web.search']))).toBe(true);
+    expect(toolGapReason(req)).toMatch(/research\.web requires a web\.search tool/);
+  });
+
+  it('web.search is a genuinely wired tool (exposed to agents that carry it)', () => {
+    expect(WIRED_TOOL_SLUGS).toContain('web.search');
+    const specs = agentToolSpecsFor(['web.search']);
+    expect(specs.map((s) => s.name)).toContain('searchWeb');
   });
 });
 
@@ -79,6 +89,13 @@ describe('resolver — tool-aware eligibility', () => {
     const db = openDb(':memory:');
     agentWithCap(db, 'Fake Web Researcher', 'research.web', []); // label, but no web tool
     expect(resolveAgentsForCapabilities(db, ['research.web'], { mode: 'all' })).toHaveLength(0);
+  });
+
+  it('a capability + the REAL wired tool IS eligible (research.web now usable)', () => {
+    const db = openDb(':memory:');
+    const id = agentWithCap(db, 'Web Researcher', 'research.web', ['web.search']);
+    const eligible = resolveAgentsForCapabilities(db, ['research.web'], { mode: 'all' });
+    expect(eligible.map((m) => m.agentId)).toEqual([id]);
   });
 
   it('a model-only capability is eligible on the label alone (unchanged)', () => {
@@ -109,12 +126,17 @@ describe('manual assignment respects tool requirements', () => {
 });
 
 // ── Factory ─────────────────────────────────────────────────────────────────
-describe('factory — cannot grant a capability it cannot tool-back', () => {
-  it('a spec for a tool-backed capability with no grantable tool FAILS policy (no silent label-only agent)', () => {
+describe('factory — a tool-backed capability must carry its real tool', () => {
+  it('a research.web spec that OMITS the web tool FAILS policy (no silent label-only agent)', () => {
     const spec = AgentSpecSchema.parse({ name: 'AI Updates Researcher', instructions: 'Research honestly.', tools: ['gbrain'], requiredCapabilities: ['research.web'] });
     const check = validateSpecAgainstPolicy(spec, DEFAULT_FACTORY_POLICY, 1);
     expect(check.ok).toBe(false);
-    expect(check.violations.join(' ')).toMatch(/research\.web requires a tool the factory cannot grant/);
+    expect(check.violations.join(' ')).toMatch(/research\.web requires a tool this spec does not include/);
+  });
+
+  it('a research.web spec WITH the real web.search tool PASSES policy (factory can now tool-back it)', () => {
+    const spec = AgentSpecSchema.parse({ name: 'AI Updates Researcher', instructions: 'Research honestly and cite sources.', tools: ['web.search'], requiredCapabilities: ['research.web'] });
+    expect(validateSpecAgainstPolicy(spec, DEFAULT_FACTORY_POLICY, 1).ok).toBe(true);
   });
 
   it('a model-only capability spec passes policy (unchanged)', () => {
@@ -125,6 +147,26 @@ describe('factory — cannot grant a capability it cannot tool-back', () => {
 
 // ── Dispatch preflight ────────────────────────────────────────────────────────
 describe('dispatch preflight — never start an agent that lacks the required tool', () => {
+  beforeAll(() => {
+    process.env.LLM_PROVIDER = 'stub'; // the tool-eligible agent actually runs (deterministic, offline)
+  });
+
+  it('an agent WITH the real web.search tool passes preflight — starts and completes', async () => {
+    const db = openDb(':memory:');
+    const agent = agentWithCap(db, 'Web Researcher', 'research.web', ['web.search']);
+    const m = createMission(db, { title: 'TOP AI UPDATE DAILY BRIEF' });
+    const t = createCompanyTask(db, m.id, { title: 'Collect Daily AI Updates', requiredCapabilities: ['research.web'] });
+
+    const res = await dispatchTask(db, t.id);
+    expect(res.outcome).toBe('dispatched_agent');
+
+    const events = db.companyEvents.forTask(t.id, 100).map((e) => e.type);
+    expect(events).toContain('AGENT_STARTED');
+    expect(events).not.toContain('CAPABILITY_GAP');
+    expect(db.agentRuns.byAgent(agent).length).toBe(1);
+    expect(db.companyTasks.get(t.id)!.status).toBe('completed');
+  });
+
   it('a stale-assigned tool-less agent is NOT started; task stays queued; explicit tool gap', async () => {
     const db = openDb(':memory:');
     const agent = agentWithCap(db, 'Fake Web Researcher', 'research.web', []);

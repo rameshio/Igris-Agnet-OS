@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **V2-WEB-SEARCH-TOOL**
+Phase: Architecture V2 · make `research.web` a REAL, tool-backed capability
+Summary: Wire a genuine live web/search tool (Tavily, search-only) behind `research.web`, so an agent with the tool is truly eligible, dispatch preflight passes, and the agent can retrieve current public info and cite sources. Follows V2-TOOL-BACKED-ELIGIBILITY, which correctly left `research.web` unresolved because no web connector existed.
+Reason: The prior fix made eligibility tool-backed but no web/search connector was wired, so `research.web` was permanently a tool gap. Inspection confirmed NO existing web/search implementation and NO search credential configured anywhere → the operator chose a provider + credential (Tavily, search-only) via AskUserQuestion; no credential/API/endpoint was invented.
+Files added: `lib/connectors/websearch.ts` (Tavily search-only connector: `searchWeb`, `websearchStatus`, `clampMaxResults`; honest — no key ⇒ setup guidance + no network call; provider/timeout error surfaced, never fabricated results; returns only `{title,url,snippet,source}`), `tests/websearch.test.ts` (9 tests).
+Files modified: `lib/agents/agent-tools.ts` (register the `web.search` tool → `searchWeb`; slug enters `WIRED_TOOL_SLUGS`), `lib/agents/capability-tools.ts` (`research.web` requirement → `['web.search']`, dropped unimplemented `browser.search`/`web.fetch`), `lib/company/factory/model.ts` (`web.search` added to `FACTORY_ALLOWED_TOOLS`; violation message distinguishes not-grantable vs omitted-from-spec), `lib/connectors/types.ts` (+`web` ConnectorKind), `lib/connectors/index.ts` (websearch status check), `lib/integrations-catalog.ts` (Web Search catalog entry, `TAVILY_API_KEY`), `lib/brand-logos.tsx` (`web.search` lettermark), `tests/capability-tools.test.ts` (reframed the two now-stale cases + positive resolver/factory/dispatch coverage). NO change to the resolver, dispatch preflight, `getTaskToolGaps`, or the eligible-agents API — already generic.
+Database: no changes.
+API: no new endpoints; `GET /api/company-tasks/:id/eligible-agents` and `GET /api/connections` now include the real tool/connector automatically. `web.search` selectable in the agent tool picker.
+Behavior: an agent with capability `research.web` AND the `web.search` tool is now eligible and passes dispatch preflight (starts + completes); an agent without the tool stays ineligible; when no agent has the tool (or `TAVILY_API_KEY` is unset) `research.web` remains an explicit, honest tool gap. Web Search shows on the Connections board (not_configured until the key is added). Search-only: no arbitrary URL fetch → no SSRF surface.
+Tests added: 9 (websearch connector) + positive/ reframed capability-tools cases (+13 net across the suite).
+Tests run: `tsc --noEmit` clean; websearch/capability-tools/factory/model/connections/catalog/smoke-api targeted; full suite.
+Results: **1649 passed (173 files)**; typecheck clean. Verified live on 4100: Web Search connector = not_configured (honest, no fake connection); real "Collect Daily AI Updates" (research.web) → 0 eligible + reason "research.web requires a web.search tool, but no eligible tool is available"; a throwaway agent granted `web.search` FLIPS to eligible with no tool gap, and after deletion the gap is restored (no existing agent mutated, no residue).
+Known limits: search-only (no `fetchWebPage` yet — would require the full SSRF blocklist first); sources are preserved via the agent's cited answer (structured source extraction into the artifact is a future enhancement); a live search run needs the operator's `TAVILY_API_KEY` (+ a run brain/AI-gateway key) — wiring/tests/preflight verified without it; preflight checks structural wiring, not per-connector runtime health.
+Rollback: pure code rollback (no schema) — revert the files above; `research.web` returns to an unresolved tool gap.
+
+---
+
 Change ID: **V2-TOOL-BACKED-ELIGIBILITY**
 Phase: Architecture V2 · capability ≠ tool (tool-backed eligibility)
 Summary: Close the false-eligibility gap where a capability LABEL (`research.web`) made an agent eligible even without the actual live-web/search TOOL — the factory promoted it, the manager dispatched it, and the task failed. Eligibility for a tool-backed capability now requires BOTH the capability AND a real, wired tool.

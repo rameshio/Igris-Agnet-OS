@@ -24,13 +24,14 @@ export type CapabilityToolRequirement = { capabilityId: string; requiredToolIds:
 /**
  * The registry. Keys are canonical capability ids; only TOOL-BACKED capabilities appear.
  *
- * `research.web` requires a genuine live web/search connector. None is wired in the repo
- * today (see `WIRED_TOOL_SLUGS` — slack/gmail/notion/telegram/stripe/attio/gbrain are NOT
- * the web), so `research.web` correctly stays an explicit TOOL GAP until such a connector
- * exists. Slack / shared notes are NOT unrestricted web and never satisfy it.
+ * `research.web` requires the real `web.search` tool — a genuine live web/search connector
+ * (Tavily, see `lib/connectors/websearch.ts`), wired into the agent tool REGISTRY and on the
+ * Factory allow-list. An agent is eligible for `research.web` only when it actually carries
+ * `web.search`; a label alone, Slack, or shared notes never satisfy it. When no agent has the
+ * tool (or the provider key is unset), `research.web` remains an explicit, honest TOOL GAP.
  */
 const CAPABILITY_TOOL_REQUIREMENTS: Record<string, CapabilityToolRequirement> = {
-  'research.web': { capabilityId: 'research.web', requiredToolIds: ['web.search', 'browser.search', 'web.fetch'], mode: 'any' },
+  'research.web': { capabilityId: 'research.web', requiredToolIds: ['web.search'], mode: 'any' },
 };
 
 /** The tool requirement for a capability, or null when the capability is model-only. */

@@ -34,7 +34,7 @@ export const FACTORY_MAX_DEPTH_CEILING = 3;
  * with the live REGISTRY in lib/agents/agent-tools.ts — only slugs with a real
  * connector-backed capability are grantable (anything else would be inert or unsafe).
  */
-export const FACTORY_ALLOWED_TOOLS = ['slack', 'gmail', 'notion', 'telegram', 'stripe', 'attio', 'gbrain'] as const;
+export const FACTORY_ALLOWED_TOOLS = ['slack', 'gmail', 'notion', 'telegram', 'stripe', 'attio', 'gbrain', 'web.search'] as const;
 
 /** Gateway models a factory agent may run on. '' = the system default (always allowed). */
 export const FACTORY_ALLOWED_MODELS = [
@@ -163,7 +163,15 @@ export function validateSpecAgainstPolicy(spec: AgentSpec, policy: FactoryPolicy
   for (const capId of spec.requiredCapabilities) {
     const req = toolRequirementFor(capId);
     if (req && !satisfiesToolRequirement(req, spec.tools, grantable)) {
-      violations.push(`capability ${capId} requires a tool the factory cannot grant (needs ${req.mode} of [${req.requiredToolIds.join(', ')}]; none are grantable)`);
+      // Two honest, distinct cases: (a) the factory has NO grantable tool for this capability
+      // at all → it can never tool-back it; (b) a grantable tool exists but this spec did not
+      // include it → the spec must carry the tool it claims. Either way: fail safe, no agent.
+      const grantableRequired = req.requiredToolIds.filter((t) => grantable.has(t));
+      violations.push(
+        grantableRequired.length === 0
+          ? `capability ${capId} requires a tool the factory cannot grant (needs ${req.mode} of [${req.requiredToolIds.join(', ')}]; none are grantable)`
+          : `capability ${capId} requires a tool this spec does not include (needs ${req.mode} of [${grantableRequired.join(', ')}])`,
+      );
     }
   }
   return { ok: violations.length === 0, violations };

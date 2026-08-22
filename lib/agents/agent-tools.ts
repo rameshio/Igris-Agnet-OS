@@ -21,6 +21,7 @@ import { recentPages } from '@/lib/connectors/notion';
 import { sendTelegramMessage } from '@/lib/connectors/telegram';
 import { stripeSnapshot } from '@/lib/connectors/payments';
 import { attioClients } from '@/lib/connectors/attio';
+import { searchWeb } from '@/lib/connectors/websearch';
 import { getBrainProvider } from '@/lib/brain';
 import { writeBrainDump } from '@/lib/brain-dump';
 
@@ -109,6 +110,31 @@ const REGISTRY: Record<string, () => LlmToolSpec[]> = {
       execute: async () => {
         try {
           return await attioClients();
+        } catch (e) {
+          return { error: errMsg(e) };
+        }
+      },
+    },
+  ],
+  // Live public web search (Tavily). This is the REAL tool behind `research.web`:
+  // an agent with it can retrieve *current* public information and cite sources.
+  // Search-only (no arbitrary URL fetch) → no SSRF surface. Fails honestly when the
+  // provider is unconfigured or errors — never fabricated results.
+  'web.search': () => [
+    {
+      name: 'searchWeb',
+      description:
+        'Search the public web for current information. Returns a bounded list of results (title, url, snippet, source). Read-only. Cite the urls you use.',
+      parameters: z.object({
+        query: z.string().describe('the search query'),
+        maxResults: z.number().int().min(1).max(10).optional().describe('max results, default 5'),
+      }),
+      execute: async (args) => {
+        const query = typeof args.query === 'string' ? args.query : '';
+        if (!query.trim()) return { error: 'query is required' };
+        const maxResults = typeof args.maxResults === 'number' ? args.maxResults : undefined;
+        try {
+          return await searchWeb(query, { maxResults }, runtimeEnv());
         } catch (e) {
           return { error: errMsg(e) };
         }
