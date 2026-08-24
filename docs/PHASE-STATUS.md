@@ -166,6 +166,13 @@ A staged migration of the Hermes integration from the ACP stdio process toward H
 
 **Conditions before serve could become a default (H4+):** MCP-specific execution over serve not isolated (server-side tools incl. real email DID run) → MCP partial; skills `unverified`; persistent-memory isolation via a dedicated Hermes profile is a pending product decision; true-parallel confirmed (sessions independent).
 
+## G0 — Reliability Stabilization Prep ✅ complete (prep only — no retry engine)
+
+- **Purpose:** stabilize the suite and map the exact failure/recovery path ahead of Phase G. **Inspection + design + test-stabilization only — NO reliability runtime behavior was implemented.**
+- **Flaky tests fixed:** the two audit-identified timeouts (`tests/seed.test.ts` "every seeded agent maps to a real runtime agent — no larp" and `tests/api.test.ts` "GET /api/agents …") were the *first-touch* test in their worker — the one paying the one-time cost of a full DB seed / the whole `@/lib/agents/real` module-graph import. Both pass in ~0.5–0.7 s in isolation but occasionally crossed the aggressive **default 5 s** `testTimeout` under full-suite parallel CPU contention. Fix: a **targeted per-test timeout (20 s)** on exactly those two proven-stable tests — no blanket/global timeout change, no skipped tests, no weakened assertions, no coverage removed. Suite is now **1685/1685 green across 3 consecutive full runs**; `tsc --noEmit` clean.
+- **Reliability baseline documented:** `docs/RELIABILITY-BASELINE.md` — current execution lifecycle, failure points, stuck-state causes (H1), a proposed G1 error taxonomy mapped onto existing `ModelRouteError`/flow error codes, retry-safe vs unsafe operations, restart risks, idempotency risks, and the exact G1 integration points (IP-1…IP-9). Key confirmed gaps: `failed` is a terminal task state (no retry transition), `runtime.run` discards the error `code`, agent tasks stuck `running` after restart are never reconciled (only workflow tasks are), and one failed task blocks mission completion forever.
+- **No retry engine yet.** No retries, reassignment, backoff, stale-agent-run recovery, restart reconciliation for agent tasks, or GC were implemented. Files changed: `tests/seed.test.ts`, `tests/api.test.ts` (timeouts only) + new `docs/RELIABILITY-BASELINE.md` + this record. No code/schema/runtime change.
+
 ## Planned phases (NOT built — do not implement unless instructed)
 
 - **Phase F — Memory:** explicit G-Brain read/write nodes, controlled knowledge promotion. (Still: no auto-save.)

@@ -34,6 +34,11 @@ describe('seedDatabase', () => {
     }
   });
 
+  // First-touch cost: this is the only seed test that also loads the whole
+  // runtime-agent + connector module graph (`@/lib/agents/real`). That import is
+  // ~500ms in isolation but can exceed the aggressive 5s default under full-suite
+  // parallel CPU contention (proven stable in isolation). A targeted timeout keeps
+  // it green without a blanket global increase or weakening the assertion.
   test('every seeded agent maps to a real runtime agent — no larp', async () => {
     const { realAgents } = await import('@/lib/agents/real');
     db = openDb(':memory:');
@@ -42,7 +47,7 @@ describe('seedDatabase', () => {
     for (const agent of db.agents.all()) {
       expect(runtimeIds.has(agent.id)).toBe(true);
     }
-  });
+  }, 20_000);
 
   test('the six operating pillars, in order', () => {
     db = openDb(':memory:');

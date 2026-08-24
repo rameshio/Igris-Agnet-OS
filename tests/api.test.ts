@@ -13,6 +13,12 @@ beforeAll(() => {
 });
 
 describe('API route handlers', () => {
+  // First-touch cost: this is the first test to import a route, which triggers
+  // getDb()'s first-touch seed of the ENTIRE database (all tables). That one-time
+  // seed is ~700ms in isolation but can exceed the aggressive 5s default under
+  // full-suite parallel CPU contention (proven stable in isolation; later tests in
+  // this file reuse the seeded singleton and stay fast). A targeted timeout keeps it
+  // green without a blanket global increase or weakening the assertion.
   test('GET /api/agents returns seeded agents grouped with their department', async () => {
     const { GET } = await import('@/app/api/agents/route');
     const res = await GET();
@@ -22,7 +28,7 @@ describe('API route handlers', () => {
     expect(body.agents.length).toBeGreaterThanOrEqual(5);
     expect(body.agents[0]).toHaveProperty('name');
     expect(body.agents[0]).toHaveProperty('departmentId');
-  });
+  }, 20_000);
 
   test('GET /api/departments returns ordered departments', async () => {
     const { GET } = await import('@/app/api/departments/route');
