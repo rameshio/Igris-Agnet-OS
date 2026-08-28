@@ -38,6 +38,23 @@ export type DispatchResult =
 
 const TERMINAL: CompanyTask['status'][] = ['completed', 'failed', 'cancelled'];
 
+// Reliability G2 — the set of Company Task ids whose AGENT dispatch is executing IN THIS
+// process right now. Agent dispatch is synchronous + in-process, so a task is only
+// legitimately `running` while its id is in this set. Next bundles routes separately and
+// this must survive that, so (like the flow coordinator's active-run set, INC-001/D11) it
+// is pinned to `globalThis`. After a process restart the set is empty ⇒ any `running` agent
+// task is provably stale (its execution cannot still be alive). Never a wall-clock guess.
+declare global {
+  // eslint-disable-next-line no-var
+  var __igrisActiveAgentTasks: Set<string> | undefined;
+}
+const activeAgentTasks: Set<string> = (globalThis.__igrisActiveAgentTasks ??= new Set<string>());
+
+/** True while THIS process is actively dispatching the given task to an agent. */
+export function isAgentTaskActive(taskId: string): boolean {
+  return activeAgentTasks.has(taskId);
+}
+
 /**
  * DISPATCH PREFLIGHT — the capabilities this agent CANNOT actually perform because it
  * lacks the required, wired tool. Uses canonical tool assignments + the wired registry
@@ -159,6 +176,17 @@ function safeTransition(db: FounderDb, taskId: string, status: CompanyTask['stat
 
 // ── Agent path (synchronous) ─────────────────────────────────────────────────
 async function dispatchAgent(db: FounderDb, task: CompanyTask, agentId: string, runtime: AgentRuntime): Promise<DispatchResult> {
+  // G2: mark this task ACTIVE for the whole in-process dispatch so a concurrent recovery
+  // pass never treats a genuinely-running dispatch as stale. Cleared in `finally` even on throw.
+  activeAgentTasks.add(task.id);
+  try {
+    return await runAgentDispatch(db, task, agentId, runtime);
+  } finally {
+    activeAgentTasks.delete(task.id);
+  }
+}
+
+async function runAgentDispatch(db: FounderDb, task: CompanyTask, agentId: string, runtime: AgentRuntime): Promise<DispatchResult> {
   const missionId = task.missionId;
 
   // Assign (F0.2 compat-checked) → assigned → running.

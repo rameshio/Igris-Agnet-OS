@@ -16,6 +16,7 @@ import { chat as llmChat } from '@/lib/connectors/llm';
 import { CompanyError, getMission, updateMission, updateCompanyTask, listTasksForMission, getTaskDependencies } from '@/lib/company/service';
 import { dispatchTask, reconcileTask, type DispatchResult } from '@/lib/company/manager/delegation';
 import { promoteRetryableFailures } from '@/lib/company/manager/retry';
+import { recoverStaleRunningTasks } from '@/lib/company/manager/recovery';
 import { retireTemporaryAgents } from '@/lib/company/factory/service';
 import { appendEvent } from '@/lib/company/manager/events';
 import { safeArtifactSummary, deriveMissionComplete, type MissionReport, type MissionTaskCounts, type Blocker, type CapabilityGap } from '@/lib/company/manager/model';
@@ -46,6 +47,14 @@ export async function managerStep(db: FounderDb, missionId: string, opts: { maxS
   for (const t of listTasksForMission(db, missionId)) {
     if (t.status === 'running' && t.executionKind === 'workflow') reconcileTask(db, t.id);
   }
+
+  // 1b. Reliability G2: recover stale-running AGENT tasks. Agent dispatch is synchronous +
+  // in-process, so a task left `running` after a process restart is provably stale (its
+  // in-memory active marker is gone). Recovery marks the interrupted attempt failed WITHOUT
+  // incrementing attemptCount — a side-effect-safe task becomes retry-eligible (the G1 pass
+  // below may auto-retry it), an unsafe one becomes review-required (never auto-retried).
+  // Reconciliation runs BEFORE retry promotion and dispatch.
+  recoverStaleRunningTasks(db, missionId);
 
   // 2. Promote waiting_dependency tasks whose prerequisites are now satisfied.
   for (const t of listTasksForMission(db, missionId)) {

@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **G2-STALE-RUNNING-RECOVERY**
+Phase: Reliability G2 (stale-running recovery for agent tasks)
+Summary: Recover agent-backed Company Tasks left `running` after a process crash/restart — mark the interrupted attempt failed (safe → retry-eligible, unsafe → review-required) WITHOUT incrementing attempt_count, integrated into managerStep before the G1 retry pass. Deterministic (in-memory active-set boundary, no wall-clock). Closes IP-4.
+Reason: G1 left agent tasks stuck `running` forever on restart (agent dispatch is synchronous/in-process with no reconciler, unlike workflow tasks).
+Files added: `lib/company/manager/recovery.ts`, `tests/task-recovery.test.ts`.
+Files modified: `lib/company/manager/failure.ts` (+`EXECUTION_INTERRUPTED`/`INTERRUPTED_REVIEW_REQUIRED` classes + `execution_interrupted`/`execution_interrupted_review` codes), `lib/company/manager/delegation.ts` (`globalThis.__igrisActiveAgentTasks` set + `isAgentTaskActive` + wrap `dispatchAgent`), `lib/company/manager/model.ts` (+`TASK_EXECUTION_INTERRUPTED` event), `lib/company/manager/service.ts` (managerStep step 1b recovery pass), `components/MissionsBoard.tsx` (review-required display).
+Database: NONE — the in-memory active set + existing `last_failure_*` columns + `company_events` suffice. No lease/lock/heartbeat/scheduler table.
+API: no new endpoint — the interruption class flows through the existing `GET /api/company-tasks/:id` `retry` decision + `lastFailure*`.
+Behavior: on the next managerStep after a restart, a stale-running agent task is recovered to `failed` (interrupted); a side-effect-safe task is auto-retry-eligible (re-runs, attempt increments once), an unsafe task is "review required" (no auto/one-click retry). A genuinely in-flight dispatch is never touched.
+Tests added: 10 (A detection · B live-execution untouched · C no attempt increment · D G1-retry flow · E next dispatch +1 · F max-attempts enforced · G no double-recovery · H history/event preserved · I no artifact · J completed untouched · K queued/waiting untouched · L/M unsafe review-required + no retry · N workflow reconcile not regressed · O managerStep-before-retry integration/manual scenario · P no timers).
+Tests run: `tsc --noEmit`; full `vitest run` (two consecutive).
+Results: typecheck clean; **1720/1720** passing.
+Known limits: no reassignment, no scheduler/backoff, no GC, no mission `blocked` remodel; a review-required interrupted task needs a manual operator decision (no built-in confirmed-recovery action) — G3.
+Rollback: code-revert the listed files. No schema to undo.
+
+---
+
 Change ID: **G1-TASK-RETRY**
 Phase: Reliability G1 (bounded task-retry foundation)
 Summary: Preserve runtime failure codes, classify company-task failures, and allow CONTROLLED bounded retry (auto for transient classes on the next managerStep; explicit human retry via API/CLI/UI) — no scheduler, no reassignment, no restart recovery, no provider/tool fallback.

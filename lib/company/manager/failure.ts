@@ -28,6 +28,12 @@ export type FailureClass =
   | 'APPROVAL_REQUIRED'
   | 'INVALID_INPUT'
   | 'PERMANENT_TASK_FAILURE'
+  // Reliability G2 — a running execution was interrupted by a process restart/crash.
+  // Split by side-effect safety: EXECUTION_INTERRUPTED (idempotent → retryable like a
+  // transient) vs INTERRUPTED_REVIEW_REQUIRED (a side effect MAY have completed → a human
+  // must decide; never auto- or one-click-retried).
+  | 'EXECUTION_INTERRUPTED'
+  | 'INTERRUPTED_REVIEW_REQUIRED'
   | 'UNKNOWN_RUNTIME_FAILURE';
 
 export type FailureClassification = {
@@ -73,6 +79,12 @@ const CLASS_TABLE: Record<FailureClass, Omit<FailureClassification, 'class'>> = 
   APPROVAL_REQUIRED: { retryable: false, automaticRetryAllowed: false, explicitRetryAllowed: false, humanActionRequired: true },
   INVALID_INPUT: { retryable: false, automaticRetryAllowed: false, explicitRetryAllowed: false, humanActionRequired: true },
   PERMANENT_TASK_FAILURE: { retryable: false, automaticRetryAllowed: false, explicitRetryAllowed: false, humanActionRequired: false },
+  // G2: an interrupted execution of a side-effect-SAFE (idempotent) task behaves like a
+  // transient failure — auto-retry is still additionally gated on `isTaskAutoRetrySafe`.
+  EXECUTION_INTERRUPTED: { retryable: true, automaticRetryAllowed: true, explicitRetryAllowed: true, humanActionRequired: false },
+  // G2: an interrupted execution whose completion cannot be proven and which MAY have
+  // performed an external side effect — NEVER auto- or one-click-retried; a human decides.
+  INTERRUPTED_REVIEW_REQUIRED: { retryable: false, automaticRetryAllowed: false, explicitRetryAllowed: false, humanActionRequired: true },
   // Conservative: a human MAY retry an unknown failure once, but the Manager NEVER
   // auto-retries it (no uncontrolled automatic retry loop).
   UNKNOWN_RUNTIME_FAILURE: { retryable: true, automaticRetryAllowed: false, explicitRetryAllowed: true, humanActionRequired: false },
@@ -104,6 +116,10 @@ const CODE_TO_CLASS: Record<string, FailureClass> = {
   // Governance.
   hermes_approval_required: 'APPROVAL_REQUIRED',
   permission_denied: 'PERMISSION_DENIED',
+  // G2 recovery — a process restart interrupted a running execution. The recovery service
+  // chooses the code by side-effect safety (see lib/company/manager/recovery.ts).
+  execution_interrupted: 'EXECUTION_INTERRUPTED',
+  execution_interrupted_review: 'INTERRUPTED_REVIEW_REQUIRED',
 };
 
 /** Classify a failure from its machine-readable error code (missing/unknown ⇒ conservative UNKNOWN). */

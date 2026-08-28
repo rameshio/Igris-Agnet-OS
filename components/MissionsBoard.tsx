@@ -391,7 +391,11 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                     <button onClick={() => dispatch(t.id)} disabled={busy === t.id || ['running', 'completed', 'cancelled'].includes(t.status)} className="rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Manager to dispatch this task to an agent/workflow">
                       {busy === t.id ? '…' : 'Dispatch'}
                     </button>
-                    {t.status === 'failed' && ((t.attemptCount ?? 0) < (t.maxAttempts ?? 3) ? (
+                    {t.status === 'failed' && (t.lastFailureClass === 'INTERRUPTED_REVIEW_REQUIRED' ? (
+                      // G2: an interrupted task whose external side effect may have completed —
+                      // automatic/one-click retry is disabled; the operator must review.
+                      <span className="font-mono text-[9px] uppercase text-os-warn" title="Execution interrupted; a prior external action may have completed. Automatic retry disabled — review required.">review required</span>
+                    ) : (t.attemptCount ?? 0) < (t.maxAttempts ?? 3) ? (
                       <button onClick={() => retryTask(t.id)} disabled={busy === t.id} className="rounded border border-os-warn/50 px-2 py-0.5 font-mono text-[9.5px] text-os-warn hover:bg-os-warn/10 disabled:opacity-40" title="Controlled retry: failed→queued then dispatch (server enforces retryability, tool preflight, and approval)">
                         {busy === t.id ? '…' : 'Retry'}
                       </button>
