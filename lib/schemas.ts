@@ -170,6 +170,10 @@ export const AgentRunSchema = z.object({
   finishedAt: z.string().min(1),
   ok: z.boolean(),
   summary: z.string(),
+  // Machine-readable failure code (Reliability G1) — null on success and legacy rows.
+  // Preserved from the thrown ModelRouteError/NodeExecError so a failed company task
+  // can be classified for retry. Never a secret (redacted upstream).
+  errorCode: z.string().nullable().optional(),
   // LLM cost tracking (real-ready). Null on connector-only runs and legacy rows;
   // populated from the gateway's token usage when an agent calls the model.
   model: z.string().nullable().optional(),

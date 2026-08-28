@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/data';
 import { getCompanyTask, getTaskDependencies, updateCompanyTask, companyErrorInfo } from '@/lib/company/service';
+import { retryDecisionForTask } from '@/lib/company/manager/retry';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,7 +18,9 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
   const task = getCompanyTask(db, params.id);
   if (!task) return NextResponse.json({ error: 'task not found' }, { status: 404 });
   const { dependsOn, satisfied } = getTaskDependencies(db, params.id);
-  return NextResponse.json({ task, dependsOn, prerequisitesSatisfied: satisfied });
+  // Reliability G1 (additive): the retry decision for a failed task (safe metadata only).
+  const retry = task.status === 'failed' ? retryDecisionForTask(db, params.id) : null;
+  return NextResponse.json({ task, dependsOn, prerequisitesSatisfied: satisfied, retry });
 }
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {

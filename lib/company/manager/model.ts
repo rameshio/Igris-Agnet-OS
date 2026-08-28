@@ -105,6 +105,9 @@ export const COMPANY_EVENT_TYPES = [
   'TASK_COMPLETED',
   'TASK_FAILED',
   'CAPABILITY_GAP',
+  // Reliability G1 — bounded task retry (controlled failed→queued; no auto loop).
+  'TASK_RETRY_QUEUED',
+  'TASK_RETRY_EXHAUSTED',
   // Agent Factory (F2) — human-gated dynamic agent creation that fills a gap.
   'AGENT_PROPOSED',
   'AGENT_PROMOTED',

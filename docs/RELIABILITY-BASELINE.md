@@ -7,6 +7,21 @@
 >
 > Companion to `docs/FULL-SYSTEM-AUDIT.md` (finding **H1**) and `docs/PHASE-STATUS.md`.
 
+## G1 — IMPLEMENTED (bounded task-retry foundation)
+
+Landed on top of this baseline (see `docs/PHASE-STATUS.md` "G1" + `docs/CHANGE-LOG.md`):
+
+- **IP-1 ✅ Preserve error codes.** `AgentRunResult.code` + `AgentRun.errorCode` (new `agent_runs.error_code` column); `runtime.run` captures the thrown `ModelRouteError`/`NodeExecError` code and **redacts** the summary. A failure is no longer an opaque string.
+- **Classifier ✅.** `lib/company/manager/failure.ts` (pure) — `classifyFailure(code)` → conservative taxonomy over the EXISTING codes; `decideRetry` + `isAutomaticallyRetryable`. Reuses codes; no parallel error system.
+- **IP-3 ✅ Attempt tracking + controlled transition.** Additive `company_tasks.attempt_count`/`max_attempts` (+ `last_failure_code`/`class`/`summary`/`at`). `attemptCount` bumps exactly once per real dispatch (`beginTaskAttempt`, at `running`), never on eligibility/preview/planning/gap/approval-wait. `failed` stays terminal in `TASK_TRANSITIONS`; the **only** `failed→queued` path is the dedicated retry service (direct write, mirroring the `archived` pattern) — an ordinary `updateCompanyTask` still rejects it.
+- **IP-2 / IP-5 ✅ Retry decision + execution.** `lib/company/manager/retry.ts` — `recordTaskFailure`, `promoteRetryableFailures` (Manager auto-retry pass inside `managerStep`, transient classes only), and `retryTask` (explicit human retry). Retry stays a company/manager-level decision; low-level runtime never retries.
+- **IP-7 ✅ Events.** additive `TASK_RETRY_QUEUED` / `TASK_RETRY_EXHAUSTED`.
+- **Surfaces ✅.** `GET /api/company-tasks/:id` returns the additive `retry` decision; new `POST /api/company-tasks/:id/retry`; CLI `igris task retry` + attempts/last-failure in `task show`; MissionsBoard shows attempts, failure reason, and a Retry/exhausted control.
+
+**NOT implemented in G1 (still deferred — see §10 non-goals):** IP-4 restart / stale-running recovery for agent tasks; agent reassignment; backoff/`next_retry_at` (retry is checked on the next `managerStep`, no scheduler); IP-6 mission `blocked` remodel; provider/tool fallback (still none — invariant 15/32 intact). A missing-config failure that is later fixed is not auto-revived (it is non-retryable by class) — documented G2 follow-on.
+
+---
+
 ## 0. What G0 changed
 
 - **Fixed the 2 flaky tests** (targeted per-test timeouts on the two proven-stable, first-touch-heavy tests — see `tests/seed.test.ts` "no-larp" and `tests/api.test.ts` "GET /api/agents"). No global timeout change, no skipped tests, no weakened assertions. Suite is now **1685/1685, green across 3 consecutive full runs**.

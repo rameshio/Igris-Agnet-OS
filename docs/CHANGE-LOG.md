@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **G1-TASK-RETRY**
+Phase: Reliability G1 (bounded task-retry foundation)
+Summary: Preserve runtime failure codes, classify company-task failures, and allow CONTROLLED bounded retry (auto for transient classes on the next managerStep; explicit human retry via API/CLI/UI) — no scheduler, no reassignment, no restart recovery, no provider/tool fallback.
+Reason: Audit finding H1 — missions got permanently stuck because `failed` was terminal, agent failures collapsed to an opaque summary (code discarded), and there was no retry path.
+Files added: `lib/company/manager/failure.ts` (pure classifier + decision), `lib/company/manager/retry.ts` (attempt bump, failure record, auto-promote, explicit retry), `app/api/company-tasks/[id]/retry/route.ts`, `tests/failure-classifier.test.ts`, `tests/task-retry.test.ts`.
+Files modified: `lib/agents/runtime.ts` (preserve+redact error code), `lib/schemas.ts` (`AgentRun.errorCode`), `lib/db.ts` (2 additive migrations + row/insert), `lib/company/model.ts` (attempt/failure fields + `DEFAULT_MAX_ATTEMPTS`), `lib/company/service.ts` (init fields), `lib/company/manager/delegation.ts` (attempt at `running`, record failure with code), `lib/company/manager/service.ts` (auto-retry pass in `managerStep`), `lib/company/manager/model.ts` (+2 event types), `app/api/company-tasks/[id]/route.ts` (+`retry` decision), `lib/cli/router.ts` + `lib/cli/commands/company.ts` (`task retry`, attempts/failure in `show`), `components/MissionsBoard.tsx` (attempts, failure reason, Retry/exhausted).
+Database: additive + idempotent — `agent_runs.error_code`; `company_tasks.{attempt_count(NOT NULL DEFAULT 0), max_attempts(NOT NULL DEFAULT 3), last_failure_code, last_failure_class, last_failure_summary, last_failure_at}`. No existing column changed; existing rows default.
+API: additive `retry` field on `GET /api/company-tasks/:id`; new `POST /api/company-tasks/:id/retry` (409 + decision when non-retryable). No other contract change.
+Behavior: a failed task now records its code + classification + attempt; transient failures auto-retry (bounded by max_attempts) on the next Manager Step; the operator can explicitly retry a retryable failure (CLI/UI), rejected with a clear reason otherwise; `failed→queued` is possible ONLY through the retry service (ordinary transitions still reject it).
+Tests added: 20 (classifier taxonomy + decisions; runtime code preservation A/B + redaction O + success-null; attempt increments C, not-on-gap D; auto-retry E, no-auto for config F / approval M; exhaustion H; transition guard I; controlled retry J; success K + artifact dedup L; non-retryable reject N).
+Tests run: `tsc --noEmit`; full `vitest run`.
+Results: typecheck clean; **1705/1705** passing.
+Known limits: no restart/stale-running recovery for agent tasks; no reassignment; no backoff/scheduler (retry checked on next managerStep); a non-retryable config failure fixed afterward is not auto-revived; mission completion unchanged (a permanently-failed task truthfully blocks completion). All G2.
+Rollback: code-revert the listed files; the additive columns are harmless if left (default 0/3). No data migration to undo.
+
+---
+
 Change ID: **V2-PRESERVED-PROVENANCE**
 Phase: Architecture V2 · preserved provenance to deleted canonical artifacts + CLI ref formatting
 Summary: Represent a G-Brain canonical reference to a DELETED artifact honestly (state `missing` / Inspector `source_deleted`) instead of a 404, and render nested canonicalRefs readably in the CLI (`kind:id`, never `[object Object]`). Never restore artifacts, never delete promoted knowledge, never weaken cleanup.

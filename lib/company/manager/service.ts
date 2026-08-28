@@ -15,6 +15,7 @@ import type { FounderDb } from '@/lib/db';
 import { chat as llmChat } from '@/lib/connectors/llm';
 import { CompanyError, getMission, updateMission, updateCompanyTask, listTasksForMission, getTaskDependencies } from '@/lib/company/service';
 import { dispatchTask, reconcileTask, type DispatchResult } from '@/lib/company/manager/delegation';
+import { promoteRetryableFailures } from '@/lib/company/manager/retry';
 import { retireTemporaryAgents } from '@/lib/company/factory/service';
 import { appendEvent } from '@/lib/company/manager/events';
 import { safeArtifactSummary, deriveMissionComplete, type MissionReport, type MissionTaskCounts, type Blocker, type CapabilityGap } from '@/lib/company/manager/model';
@@ -56,6 +57,12 @@ export async function managerStep(db: FounderDb, missionId: string, opts: { maxS
       }
     }
   }
+
+  // 2b. Reliability G1: auto-retry AUTOMATICALLY-retryable failed tasks (transient
+  // provider/timeout/rate-limit) with attempts remaining — controlled failed→queued,
+  // so the dispatch loop below re-runs them. Non-retryable failures (missing config,
+  // capability gap, invalid input, unknown) are NEVER auto-retried and never loop.
+  promoteRetryableFailures(db, missionId);
 
   // 3. Dispatch the next actionable tasks, bounded by maxSteps.
   const dispatched: DispatchResult[] = [];

@@ -104,7 +104,11 @@ async function missionCommand(ctx: Ctx): Promise<number> {
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
-type Task = { id: string; title: string; status: string; requiredCapabilities?: string[]; assignedAgentId?: string };
+type Task = {
+  id: string; title: string; status: string; requiredCapabilities?: string[]; assignedAgentId?: string;
+  attemptCount?: number; maxAttempts?: number; lastFailureCode?: string; lastFailureClass?: string; lastFailureSummary?: string;
+};
+type RetryDecision = { decision: string; class: string; reason: string; remainingAttempts: number };
 
 async function taskList(ctx: Ctx): Promise<number> {
   const mission = flag(ctx, 'mission');
@@ -119,18 +123,59 @@ async function taskList(ctx: Ctx): Promise<number> {
 async function taskShow(ctx: Ctx): Promise<number> {
   const id = ctx.args[1];
   if (!id) return invalid(ctx, 'usage: task show <id>');
-  const res = await ctx.client.get<{ task: Task; prerequisitesSatisfied: boolean }>(`/api/company-tasks/${id}`);
+  const res = await ctx.client.get<{ task: Task; prerequisitesSatisfied: boolean; retry: RetryDecision | null }>(`/api/company-tasks/${id}`);
   if (!res.ok) return reportApiError(ctx, res.status, res.data);
   const t = res.data.task;
-  const human = kv([
+  const rows: [string, string][] = [
     ['Task', t.title],
     ['ID', t.id],
     ['Status', t.status],
     ['Capabilities', (t.requiredCapabilities ?? []).join(', ') || '—'],
     ['Assigned', t.assignedAgentId ?? '—'],
     ['Prereqs satisfied', String(res.data.prerequisitesSatisfied)],
-  ]);
-  emit(ctx.io, ctx.config, human, res.data);
+    ['Attempts', `${t.attemptCount ?? 0}/${t.maxAttempts ?? 3}`],
+  ];
+  if (t.status === 'failed') {
+    rows.push(['Last failure', `${t.lastFailureClass ?? 'unknown'}${t.lastFailureCode ? ` (${t.lastFailureCode})` : ''}`]);
+    if (t.lastFailureSummary) rows.push(['Failure detail', t.lastFailureSummary]);
+    if (res.data.retry) rows.push(['Retry', `${res.data.retry.decision} — ${res.data.retry.reason}`]);
+  }
+  emit(ctx.io, ctx.config, kv(rows), res.data);
+  return EXIT.OK;
+}
+
+async function taskRetry(ctx: Ctx): Promise<number> {
+  const id = ctx.args[1];
+  if (!id) return invalid(ctx, 'usage: task retry <id>');
+  // Preview: show the current failure + retry eligibility before mutating.
+  const pre = await ctx.client.get<{ task: Task; retry: RetryDecision | null }>(`/api/company-tasks/${id}`);
+  if (!pre.ok) return reportApiError(ctx, pre.status, pre.data);
+  const t = pre.data.task;
+  if (t.status !== 'failed') {
+    ctx.io.err(`error: task ${id} is ${t.status}, not failed — nothing to retry.`);
+    return EXIT.ACTION_NOT_COMPLETED;
+  }
+  const decision = pre.data.retry;
+  ctx.io.out(`Task ${id} failed: ${t.lastFailureClass ?? 'unknown'}${t.lastFailureCode ? ` (${t.lastFailureCode})` : ''} · attempts ${t.attemptCount ?? 0}/${t.maxAttempts ?? 3}`);
+  if (decision && decision.decision !== 'RETRY_ALLOWED') {
+    ctx.io.err(`error: not retryable — ${decision.decision}: ${decision.reason}`);
+    return EXIT.ACTION_NOT_COMPLETED;
+  }
+  if (!(await ensureConfirmed(ctx, `Retry task ${id}. Controlled failed→queued, then dispatch (server enforces tool preflight + Phase-E approval).`))) {
+    ctx.io.err('Aborted.');
+    return EXIT.ACTION_NOT_COMPLETED;
+  }
+  const res = await ctx.client.post<{ ok?: boolean; retry?: RetryDecision; dispatch?: { outcome?: string }; error?: string }>(`/api/company-tasks/${id}/retry`, {});
+  if (!res.ok) {
+    // 409 carries the retry decision (human action required / exhausted).
+    if (res.status === 409 && res.data.retry) {
+      ctx.io.err(`error: not retryable — ${res.data.retry.decision}: ${res.data.retry.reason}`);
+      return EXIT.ACTION_NOT_COMPLETED;
+    }
+    return reportApiError(ctx, res.status, res.data);
+  }
+  const outcome = res.data.dispatch?.outcome ?? 'queued';
+  emit(ctx.io, ctx.config, `retry dispatched — outcome: ${outcome}`, res.data);
   return EXIT.OK;
 }
 
@@ -176,8 +221,10 @@ async function taskCommand(ctx: Ctx): Promise<number> {
       return taskEligible(ctx);
     case 'dispatch':
       return taskDispatch(ctx);
+    case 'retry':
+      return taskRetry(ctx);
     default:
-      return invalid(ctx, `unknown task subcommand "${ctx.args[0]}" (list|show|eligible|dispatch)`);
+      return invalid(ctx, `unknown task subcommand "${ctx.args[0]}" (list|show|eligible|dispatch|retry)`);
   }
 }
 

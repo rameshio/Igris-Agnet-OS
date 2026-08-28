@@ -2,12 +2,20 @@ import { randomUUID } from 'node:crypto';
 import type { FounderDb } from '@/lib/db';
 import type { LlmToolSpec } from '@/lib/connectors/llm';
 import { runCostUsd } from '@/lib/agent-costs';
+import { errorCodeOf, redactSecret } from '@/lib/flows/errors';
 import type { AgentRun, Broadcast } from '@/lib/schemas';
 
 export type AgentRunResult = {
   ok: boolean;
   summary: string;
   data?: unknown;
+  /**
+   * Machine-readable failure code (Reliability G1). Preserved from a thrown
+   * `ModelRouteError`/`NodeExecError` (or any `{ code }` error), or set explicitly
+   * by an agent that fails deterministically. Enables `classifyFailure` to decide
+   * retryability instead of collapsing every failure to an opaque summary string.
+   */
+  code?: string;
   /** LLM usage, when the run called the model. Priced onto the stored run. */
   model?: string;
   tokensIn?: number;
@@ -69,7 +77,9 @@ export function createRuntime(db: FounderDb, agents: RuntimeAgent[]) {
       try {
         result = await agent.run();
       } catch (err) {
-        result = { ok: false, summary: err instanceof Error ? err.message : String(err) };
+        // Preserve the machine-readable code (ModelRouteError/NodeExecError/any {code})
+        // and REDACT the human summary so a provider error never leaks a key/token.
+        result = { ok: false, summary: redactSecret(err instanceof Error ? err.message : String(err)), code: errorCodeOf(err) };
       }
       const priced = result.tokensIn != null || result.tokensOut != null;
       const run: AgentRun = {
@@ -79,6 +89,8 @@ export function createRuntime(db: FounderDb, agents: RuntimeAgent[]) {
         finishedAt: new Date().toISOString(),
         ok: result.ok,
         summary: result.summary,
+        // Only failures carry a code; a successful run has none.
+        errorCode: result.ok ? null : result.code ?? errorCodeOf(undefined),
         model: result.model ?? null,
         tokensIn: result.tokensIn ?? null,
         tokensOut: result.tokensOut ?? null,

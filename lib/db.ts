@@ -194,6 +194,12 @@ CREATE TABLE IF NOT EXISTS company_tasks (
   required_capabilities TEXT NOT NULL DEFAULT '[]',
   execution_kind TEXT,
   execution_ref_id TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  last_failure_code TEXT,
+  last_failure_class TEXT,
+  last_failure_summary TEXT,
+  last_failure_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   started_at TEXT,
@@ -671,6 +677,13 @@ function migrateCompanyTasksTable(db: InstanceType<typeof Database>): void {
   if (columns.size === 0) return; // table not created yet (fresh DBs get the columns via DDL)
   if (!columns.has('execution_kind')) db.exec('ALTER TABLE company_tasks ADD COLUMN execution_kind TEXT');
   if (!columns.has('execution_ref_id')) db.exec('ALTER TABLE company_tasks ADD COLUMN execution_ref_id TEXT');
+  // Reliability G1: bounded attempt tracking + last-failure metadata (additive, idempotent).
+  if (!columns.has('attempt_count')) db.exec('ALTER TABLE company_tasks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0');
+  if (!columns.has('max_attempts')) db.exec('ALTER TABLE company_tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3');
+  if (!columns.has('last_failure_code')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_code TEXT');
+  if (!columns.has('last_failure_class')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_class TEXT');
+  if (!columns.has('last_failure_summary')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_summary TEXT');
+  if (!columns.has('last_failure_at')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_at TEXT');
 }
 
 /** Databases created before the funnel-space build lack these columns. */
@@ -719,6 +732,8 @@ function migrateAgentRunsTable(db: InstanceType<typeof Database>): void {
   if (!columns.has('tokens_in')) db.exec('ALTER TABLE agent_runs ADD COLUMN tokens_in INTEGER');
   if (!columns.has('tokens_out')) db.exec('ALTER TABLE agent_runs ADD COLUMN tokens_out INTEGER');
   if (!columns.has('cost_usd')) db.exec('ALTER TABLE agent_runs ADD COLUMN cost_usd REAL');
+  // Reliability G1: preserve the machine-readable failure code of a failed run.
+  if (!columns.has('error_code')) db.exec('ALTER TABLE agent_runs ADD COLUMN error_code TEXT');
 }
 
 // /flows workflows gained soft-archive after first ship: a workflow with run or
@@ -971,6 +986,8 @@ export function openDb(path: string) {
     id: string; mission_id: string; parent_task_id: string | null; title: string; objective: string; status: string;
     assigned_agent_id: string | null; workflow_id: string | null; run_id: string | null; priority: string;
     required_capabilities: string; execution_kind: string | null; execution_ref_id: string | null;
+    attempt_count: number | null; max_attempts: number | null;
+    last_failure_code: string | null; last_failure_class: string | null; last_failure_summary: string | null; last_failure_at: string | null;
     created_at: string; updated_at: string; started_at: string | null; completed_at: string | null;
   };
   const rowToCompanyTask = (r: CompanyTaskRow): CompanyTask => ({
@@ -987,6 +1004,12 @@ export function openDb(path: string) {
     executionRefId: r.execution_ref_id ?? undefined,
     priority: r.priority as CompanyTask['priority'],
     requiredCapabilities: parseJson<string[]>(r.required_capabilities, []),
+    attemptCount: r.attempt_count ?? 0,
+    maxAttempts: r.max_attempts ?? 3,
+    lastFailureCode: r.last_failure_code ?? undefined,
+    lastFailureClass: r.last_failure_class ?? undefined,
+    lastFailureSummary: r.last_failure_summary ?? undefined,
+    lastFailureAt: r.last_failure_at ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     startedAt: r.started_at ?? undefined,
@@ -1011,12 +1034,14 @@ export function openDb(path: string) {
     insert(t: CompanyTask): void {
       db.prepare(
         `INSERT OR REPLACE INTO company_tasks
-          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, execution_kind, execution_ref_id, priority, required_capabilities, created_at, updated_at, started_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, execution_kind, execution_ref_id, priority, required_capabilities, attempt_count, max_attempts, last_failure_code, last_failure_class, last_failure_summary, last_failure_at, created_at, updated_at, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         t.id, t.missionId, t.parentTaskId ?? null, t.title, t.objective ?? '', t.status, t.assignedAgentId ?? null,
         t.workflowId ?? null, t.runId ?? null, t.executionKind ?? null, t.executionRefId ?? null, t.priority,
-        JSON.stringify(t.requiredCapabilities), t.createdAt, t.updatedAt, t.startedAt ?? null, t.completedAt ?? null,
+        JSON.stringify(t.requiredCapabilities), t.attemptCount ?? 0, t.maxAttempts ?? 3,
+        t.lastFailureCode ?? null, t.lastFailureClass ?? null, t.lastFailureSummary ?? null, t.lastFailureAt ?? null,
+        t.createdAt, t.updatedAt, t.startedAt ?? null, t.completedAt ?? null,
       );
     },
   };
@@ -2222,6 +2247,7 @@ export function openDb(path: string) {
       finishedAt: r.finished_at,
       ok: Boolean(r.ok),
       summary: r.summary,
+      errorCode: r.error_code ?? null,
       model: r.model ?? null,
       tokensIn: r.tokens_in ?? null,
       tokensOut: r.tokens_out ?? null,
@@ -2243,10 +2269,10 @@ export function openDb(path: string) {
     },
     insert(run: AgentRun): void {
       db.prepare(
-        'INSERT OR REPLACE INTO agent_runs (id, agent_id, started_at, finished_at, ok, summary, model, tokens_in, tokens_out, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT OR REPLACE INTO agent_runs (id, agent_id, started_at, finished_at, ok, summary, error_code, model, tokens_in, tokens_out, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         run.id, run.agentId, run.startedAt, run.finishedAt, run.ok ? 1 : 0, run.summary,
-        run.model ?? null, run.tokensIn ?? null, run.tokensOut ?? null, run.costUsd ?? null,
+        run.errorCode ?? null, run.model ?? null, run.tokensIn ?? null, run.tokensOut ?? null, run.costUsd ?? null,
       );
     },
   };

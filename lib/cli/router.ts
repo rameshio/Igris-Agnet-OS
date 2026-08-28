@@ -40,7 +40,7 @@ Commands:
   models [providers|current|use] providers, effective default, or set default (canonical)
   ask "<question>" [--model p:m] read-only company question via the configured model
   mission list|show|create|plan|step|archive
-  task   list --mission <id> | show <id> | eligible <id> | dispatch <id>
+  task   list --mission <id> | show <id> | eligible <id> | dispatch <id> | retry <id>
   artifact show <id> | promote <id>
   brain  search "<q>" | entity <id> | neighborhood <id> | promote-artifact <id>
   intelligence [--window 1h|24h|7d|30d]

@@ -178,6 +178,18 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
     if ((await guard(r)) && selectedId) await loadDetail(selectedId);
   };
 
+  // Reliability G1: controlled retry of a FAILED task. The server re-runs the retry
+  // decision (classification + attempt budget); a non-retryable failure returns 409
+  // with a reason (surfaced inline) — no forcing, no provider/tool fallback.
+  const retryTask = async (taskId: string) => {
+    setBusy(taskId);
+    const r = await api<{ retry?: { decision: string; reason: string } }>(`/api/company-tasks/${taskId}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    setBusy(null);
+    if (!r.ok) setError(r.data?.retry ? `not retryable — ${r.data.retry.decision}: ${r.data.retry.reason}` : r.error ?? 'retry failed');
+    else setError(null);
+    if (selectedId) await loadDetail(selectedId);
+  };
+
   // ── F2 Agent Factory (operator-triggered; agent CREATED only on approval) ──
   const proposeAgent = async (taskId: string) => {
     setBusy(taskId);
@@ -360,6 +372,7 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                         <Badge tone={TASK_TONE[t.status]}>{t.status.replace('_', ' ')}</Badge>
                         {t.assignedAgentId && <span className="font-mono text-[9.5px] text-os-dim">→ {t.assignedAgentId}</span>}
                         {t.executionKind && <span className="font-mono text-[9px] uppercase text-os-dim">[{t.executionKind}]</span>}
+                        {(t.attemptCount ?? 0) > 0 && <span className="font-mono text-[9px] uppercase text-os-dim" title="Execution attempts used / budget">att {t.attemptCount}/{t.maxAttempts}</span>}
                         {t.requiredCapabilities.map((c) => <span key={c} className="rounded-sm-t border border-os-border bg-os-surface2 px-[6px] py-0.5 font-mono text-[9px] text-os-muted">{c}</span>)}
                       </div>
                     </div>
@@ -368,10 +381,23 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                     </select>
                   </div>
 
+                  {t.status === 'failed' && t.lastFailureClass && (
+                    <div className="mt-1.5 font-mono text-[9.5px] text-os-err/90" title={t.lastFailureSummary ?? undefined}>
+                      ✕ {t.lastFailureClass}{t.lastFailureCode ? ` (${t.lastFailureCode})` : ''}{t.lastFailureSummary ? ` — ${t.lastFailureSummary.slice(0, 80)}` : ''}
+                    </div>
+                  )}
+
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <button onClick={() => dispatch(t.id)} disabled={busy === t.id || ['running', 'completed', 'cancelled'].includes(t.status)} className="rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Manager to dispatch this task to an agent/workflow">
                       {busy === t.id ? '…' : 'Dispatch'}
                     </button>
+                    {t.status === 'failed' && ((t.attemptCount ?? 0) < (t.maxAttempts ?? 3) ? (
+                      <button onClick={() => retryTask(t.id)} disabled={busy === t.id} className="rounded border border-os-warn/50 px-2 py-0.5 font-mono text-[9.5px] text-os-warn hover:bg-os-warn/10 disabled:opacity-40" title="Controlled retry: failed→queued then dispatch (server enforces retryability, tool preflight, and approval)">
+                        {busy === t.id ? '…' : 'Retry'}
+                      </button>
+                    ) : (
+                      <span className="font-mono text-[9px] uppercase text-os-err" title="Retry budget spent">retry exhausted</span>
+                    ))}
                     <button onClick={() => showEligible(t.id)} className="rounded border border-os-border px-2 py-0.5 font-mono text-[9.5px] text-os-muted hover:text-os-text">
                       {eligibleFor?.taskId === t.id ? 'Hide eligible' : 'Eligible agents'}
                     </button>

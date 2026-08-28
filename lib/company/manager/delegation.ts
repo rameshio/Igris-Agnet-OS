@@ -27,6 +27,7 @@ import { CompanyError, getCompanyTask, getTaskDependencies, updateCompanyTask, a
 import { chooseDispatchTarget, selectAgent } from '@/lib/company/manager/model';
 import { appendEvent } from '@/lib/company/manager/events';
 import { createArtifact } from '@/lib/company/manager/artifacts';
+import { beginTaskAttempt, recordTaskFailure } from '@/lib/company/manager/retry';
 
 export type DispatchResult =
   | { outcome: 'dispatched_agent'; task: CompanyTask; agentRunId: string; ok: boolean; artifactId?: string }
@@ -166,8 +167,11 @@ async function dispatchAgent(db: FounderDb, task: CompanyTask, agentId: string, 
   if (t.status === 'queued') t = updateCompanyTask(db, t.id, { status: 'assigned' });
   appendEvent(db, { type: 'TASK_ASSIGNED', missionId, taskId: t.id, agentId, summary: `Assigned to ${agentId}` });
   t = updateCompanyTask(db, t.id, { status: 'running' });
+  // Reliability G1: count this real execution attempt exactly once (at `running`).
+  t = beginTaskAttempt(db, t.id);
+  const attempt = t.attemptCount;
   appendEvent(db, { type: 'TASK_DISPATCHED', missionId, taskId: t.id, agentId, summary: `Dispatched to agent ${agentId}` });
-  appendEvent(db, { type: 'AGENT_STARTED', missionId, taskId: t.id, agentId, summary: `Agent ${agentId} started` });
+  appendEvent(db, { type: 'AGENT_STARTED', missionId, taskId: t.id, agentId, summary: `Agent ${agentId} started (attempt ${attempt}/${t.maxAttempts})` });
 
   // Execute via the EXISTING agent runtime (persists an agent_runs row).
   const run = await runtime.run(agentId);
@@ -195,7 +199,17 @@ async function dispatchAgent(db: FounderDb, task: CompanyTask, agentId: string, 
     appendEvent(db, { type: 'TASK_COMPLETED', missionId, taskId: t.id, agentId, summary: `Task completed by ${agentId}` });
   } else {
     t = updateCompanyTask(db, t.id, { status: 'failed' });
-    appendEvent(db, { type: 'TASK_FAILED', missionId, taskId: t.id, agentId, summary: `Task failed`, metadata: { error: run.summary.slice(0, 200) } });
+    // Reliability G1: preserve the failure code + classification for the retry decision.
+    const rec = recordTaskFailure(db, t.id, { code: run.errorCode, summary: run.summary });
+    t = rec?.task ?? t;
+    appendEvent(db, {
+      type: 'TASK_FAILED',
+      missionId,
+      taskId: t.id,
+      agentId,
+      summary: `Task failed (attempt ${t.attemptCount}/${t.maxAttempts})`,
+      metadata: { error: run.summary.slice(0, 160), code: run.errorCode ?? null, class: rec?.decision.class ?? null, attempt: t.attemptCount },
+    });
   }
   return { outcome: 'dispatched_agent', task: t, agentRunId: run.id, ok: run.ok, artifactId };
 }
@@ -215,6 +229,8 @@ function dispatchWorkflow(db: FounderDb, task: CompanyTask, workflowId: string):
   let t = getCompanyTask(db, task.id)!;
   if (t.status === 'queued') t = updateCompanyTask(db, t.id, { status: 'assigned' });
   t = updateCompanyTask(db, t.id, { status: 'running' });
+  // Reliability G1: count this real execution attempt exactly once (at `running`).
+  t = beginTaskAttempt(db, t.id);
 
   // Create + launch the run through the EXISTING coordinator (immutable published version).
   const run = db.flowRuns.create({ id: `run-${randomUUID()}`, workflowId, workflowVersion: version, startingInput: { text: (task.objective ?? task.title).slice(0, 20_000) } });
@@ -258,8 +274,11 @@ export function reconcileTask(db: FounderDb, taskId: string): CompanyTask | null
     return t;
   }
   if (run.status === 'failed' || run.status === 'interrupted') {
-    const t = updateCompanyTask(db, taskId, { status: 'failed' });
-    appendEvent(db, { type: 'TASK_FAILED', missionId, taskId, workflowId: task.workflowId, summary: `Workflow task ${run.status}`, metadata: { runStatus: run.status } });
+    let t = updateCompanyTask(db, taskId, { status: 'failed' });
+    // Reliability G1: preserve the workflow run's error code for the retry decision.
+    const rec = recordTaskFailure(db, taskId, { code: run.errorCode ?? run.status, summary: run.errorMessage ?? `workflow ${run.status}` });
+    t = rec?.task ?? t;
+    appendEvent(db, { type: 'TASK_FAILED', missionId, taskId, workflowId: task.workflowId, summary: `Workflow task ${run.status} (attempt ${t.attemptCount}/${t.maxAttempts})`, metadata: { runStatus: run.status, code: run.errorCode ?? null, class: rec?.decision.class ?? null, attempt: t.attemptCount } });
     return t;
   }
   if (run.status === 'waiting_approval') {

@@ -67,11 +67,24 @@ export type CompanyTask = {
   executionRefId?: string;
   priority: WorkPriority;
   requiredCapabilities: string[]; // F0.1 capability ids — metadata, never auto-assigns
+  // Reliability G1 — bounded attempt tracking. `attemptCount` = execution attempts
+  // already STARTED (0 for a fresh task; incremented exactly once per real dispatch,
+  // never by eligibility/preview/planning/approval-wait/capability-gap). Retry is a
+  // controlled failed→queued transition through the dedicated retry service only.
+  attemptCount: number;
+  maxAttempts: number;
+  lastFailureCode?: string;
+  lastFailureClass?: string;
+  lastFailureSummary?: string;
+  lastFailureAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
 };
+
+/** Default retry budget for a new company task (Reliability G1). */
+export const DEFAULT_MAX_ATTEMPTS = 3;
 
 export type CompanyTaskDependency = { taskId: string; dependsOnTaskId: string; createdAt: string };
 

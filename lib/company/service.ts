@@ -26,6 +26,7 @@ import {
   missionTaskSummary,
   prerequisitesSatisfied,
   wouldCreateCycle,
+  DEFAULT_MAX_ATTEMPTS,
   type Mission,
   type MissionStatus,
   type CompanyTask,
@@ -142,6 +143,8 @@ export function createCompanyTask(db: FounderDb, missionId: string, input: unkno
     priority: parsed.priority,
     requiredCapabilities: parsed.requiredCapabilities,
     workflowId: parsed.workflowId,
+    attemptCount: 0,
+    maxAttempts: DEFAULT_MAX_ATTEMPTS,
     createdAt: ts,
     updatedAt: ts,
   };
