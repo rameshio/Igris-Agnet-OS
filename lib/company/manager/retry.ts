@@ -80,8 +80,12 @@ export function retryDecisionForTask(db: FounderDb, taskId: string): RetryDecisi
   return decideRetry({ classification, attemptCount: t.attemptCount ?? 0, maxAttempts: t.maxAttempts ?? 3 });
 }
 
-/** The controlled, dedicated `failed → queued` write (bypasses the ordinary transition guard). */
-function moveFailedToQueued(db: FounderDb, task: CompanyTask): CompanyTask {
+/**
+ * The controlled, dedicated `failed → queued` write (bypasses the ordinary transition guard).
+ * Shared by the G1 auto/explicit retry paths and the G3 reassignment path — the ONLY sanctioned
+ * way a failed task returns toward execution. Keeps the failure history; clears the prior run ref.
+ */
+export function moveFailedToQueued(db: FounderDb, task: CompanyTask): CompanyTask {
   const updated: CompanyTask = {
     ...task,
     status: 'queued',

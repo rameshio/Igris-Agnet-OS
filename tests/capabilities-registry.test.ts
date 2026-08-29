@@ -95,6 +95,22 @@ describe('resolveAgentsForCapabilities', () => {
       expect(json).not.toContain(banned);
     }
   });
+
+  test('disabled/retired custom agent (enabled: false) is NOT selectable by resolveAgentsForCapabilities, but getAgentById preserves history', () => {
+    const db = openDb(':memory:');
+    db.capabilities.upsert({ id: 'research.market', name: 'Market Research' });
+    const custom = createCustomAgent(db, { name: 'ScoutDisabled', departmentId: 'dept-comms', instructions: 'Research.', model: '', tools: [], enabled: false });
+    db.agentCapabilities.assign(custom.id, { capabilityId: 'research.market' });
+
+    // Disabled agent must NOT be returned for new execution
+    const matches = resolveAgentsForCapabilities(db, ['research.market']);
+    expect(matches.map((m) => m.agentId)).not.toContain(custom.id);
+
+    // Historical lookup by id still works
+    const agent = getAgentById(db, custom.id);
+    expect(agent).toBeDefined();
+    expect(agent!.id).toBe(custom.id);
+  });
 });
 
 describe('schema is idempotent + existing data unaffected', () => {

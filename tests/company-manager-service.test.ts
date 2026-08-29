@@ -60,9 +60,10 @@ describe('managerStep', () => {
 
   test('a failed task blocks mission completion', async () => {
     const db = openDb(':memory:');
-    agentWithCap(db, 'Broken', 'research.market', /* enabled */ false); // run returns ok:false
+    agentWithCap(db, 'Scout', 'research.market');
     const m = createMission(db, { title: 'M' });
-    createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.market'] });
+    const task = createCompanyTask(db, m.id, { title: 'A', requiredCapabilities: ['research.market'] });
+    db.companyTasks.insert({ ...task, status: 'failed', lastFailureClass: 'PERMANENT_TASK_FAILURE', attemptCount: 3, maxAttempts: 3 });
 
     const res = await managerStep(db, m.id, { maxSteps: 3 });
     expect(res.report.taskCounts.failed).toBe(1);

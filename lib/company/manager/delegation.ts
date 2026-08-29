@@ -109,9 +109,9 @@ export async function dispatchTask(db: FounderDb, taskId: string, opts: { runtim
   const eligible = task.requiredCapabilities.length ? resolveAgentsForCapabilities(db, task.requiredCapabilities, { mode: 'all' }) : [];
   const eligibleIds = eligible.map((m) => m.agentId);
   const busy = new Set(buildAgentPresence(db).filter((p) => p.state === 'working' || p.state === 'waiting_approval').map((p) => p.agentId));
-  // A directly-assigned agent must ALSO be tool-eligible — an assignment can never override
-  // a real tool gap (e.g. a stale/pre-fix `research.web` assignment to a tool-less agent).
-  const assignedExists = !!(task.assignedAgentId && getAgentById(db, task.assignedAgentId));
+  const assignedCustom = task.assignedAgentId ? db.customAgents.get(task.assignedAgentId) : undefined;
+  const assignedIsEnabled = assignedCustom ? assignedCustom.enabled !== false : true;
+  const assignedExists = !!(task.assignedAgentId && getAgentById(db, task.assignedAgentId) && assignedIsEnabled);
   const assignedToolGap = assignedExists ? taskToolGap(db, task, task.assignedAgentId!) : [];
   const assignedValid = assignedExists && assignedToolGap.length === 0 ? task.assignedAgentId : undefined;
   let chosenAgentId = assignedValid ?? selectAgent(eligibleIds, busy) ?? undefined;

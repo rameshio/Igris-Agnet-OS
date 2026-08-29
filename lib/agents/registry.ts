@@ -54,10 +54,15 @@ export function getCapabilitiesForAgent(db: FounderDb, agentId: string): Capabil
 /** Registered agents (safe id+name) currently assigned a given capability. */
 export function getAgentsForCapability(db: FounderDb, capabilityId: string): { agentId: string; name: string }[] {
   const cap = normalizeCapabilityId(capabilityId);
-  const known = new Map(allRuntimeAgents(db).map((a) => [a.id, a.name]));
+  const disabledCustomIds = new Set(db.customAgents.all().filter((a) => a.enabled === false).map((a) => a.id));
+  const known = new Map(
+    allRuntimeAgents(db)
+      .filter((a) => !disabledCustomIds.has(a.id))
+      .map((a) => [a.id, a.name]),
+  );
   return db.agentCapabilities
     .forCapability(cap)
-    .filter((ac) => known.has(ac.agentId)) // ignore assignments to agents that no longer exist
+    .filter((ac) => known.has(ac.agentId)) // ignore assignments to agents that no longer exist or are disabled
     .map((ac) => ({ agentId: ac.agentId, name: known.get(ac.agentId)! }));
 }
 
@@ -86,7 +91,10 @@ export function resolveAgentsForCapabilities(
   required: string[],
   opts: { mode?: ResolveMode; enforceToolRequirements?: boolean } = {},
 ): AgentMatch[] {
-  const agents = allRuntimeAgents(db).map((a) => ({ id: a.id, name: a.name }));
+  const disabledCustomIds = new Set(db.customAgents.all().filter((a) => a.enabled === false).map((a) => a.id));
+  const agents = allRuntimeAgents(db)
+    .filter((a) => !disabledCustomIds.has(a.id))
+    .map((a) => ({ id: a.id, name: a.name }));
   let toolCheck: ((agentId: string, capabilityId: string) => boolean) | undefined;
   if (opts.enforceToolRequirements !== false) {
     const available = new Set(WIRED_TOOL_SLUGS);

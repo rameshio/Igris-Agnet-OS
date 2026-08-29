@@ -17,6 +17,7 @@ import { CompanyError, getMission, updateMission, updateCompanyTask, listTasksFo
 import { dispatchTask, reconcileTask, type DispatchResult } from '@/lib/company/manager/delegation';
 import { promoteRetryableFailures } from '@/lib/company/manager/retry';
 import { recoverStaleRunningTasks } from '@/lib/company/manager/recovery';
+import { reassignAgentSpecificFailures } from '@/lib/company/manager/reassign';
 import { retireTemporaryAgents } from '@/lib/company/factory/service';
 import { appendEvent } from '@/lib/company/manager/events';
 import { safeArtifactSummary, deriveMissionComplete, type MissionReport, type MissionTaskCounts, type Blocker, type CapabilityGap } from '@/lib/company/manager/model';
@@ -55,6 +56,14 @@ export async function managerStep(db: FounderDb, missionId: string, opts: { maxS
   // below may auto-retry it), an unsafe one becomes review-required (never auto-retried).
   // Reconciliation runs BEFORE retry promotion and dispatch.
   recoverStaleRunningTasks(db, missionId);
+
+  // 1c. Reliability G3: reassign AGENT-SPECIFIC failures (the assigned agent is no longer an
+  // eligible executor — removed/retired/lost a required wired tool) to another already-eligible
+  // agent, BEFORE the G1 same-agent retry pass. A still-eligible agent that hit a shared/transient
+  // failure is left to G1 (same-agent retry) — no arbitrary rotation, no provider/tool fallback,
+  // no Agent-Factory creation. Reassignment moves the task failed→queued WITHOUT incrementing the
+  // attempt; the dispatch loop below runs the new agent (which increments it once).
+  reassignAgentSpecificFailures(db, missionId);
 
   // 2. Promote waiting_dependency tasks whose prerequisites are now satisfied.
   for (const t of listTasksForMission(db, missionId)) {

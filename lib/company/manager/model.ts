@@ -110,6 +110,8 @@ export const COMPANY_EVENT_TYPES = [
   'TASK_RETRY_EXHAUSTED',
   // Reliability G2 — a stale-running task recovered after a process restart/crash.
   'TASK_EXECUTION_INTERRUPTED',
+  // Reliability G3 — an agent-specific failure reassigned to another eligible agent.
+  'TASK_REASSIGNED',
   // Agent Factory (F2) — human-gated dynamic agent creation that fills a gap.
   'AGENT_PROPOSED',
   'AGENT_PROMOTED',

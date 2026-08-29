@@ -25,6 +25,23 @@ Rollback:       how to revert (note code vs schema rollback)
 
 ---
 
+Change ID: **G3-AGENT-REASSIGNMENT**
+Phase: Reliability G3 (controlled agent reassignment)
+Summary: When a task fails because the ASSIGNED AGENT is specifically ineligible (removed/retired/lost a required wired tool) and another already-eligible agent can safely run the SAME task, reassign A → B (canonical eligibility + deterministic pick), move failed→queued WITHOUT incrementing attempt_count, and let the normal dispatch run B. Not provider/tool fallback, not Agent-Factory, not a scheduler.
+Reason: G0–G2 left "the agent itself is the problem" unaddressed — a task assigned to an agent that became unavailable would keep retrying the same dead agent (or stall) even though an equivalent eligible agent exists.
+Files added: `lib/company/manager/reassign.ts` (pure `decideReassignment` + `evaluateReassignment` + `reassignTaskIfWarranted` + `reassignAgentSpecificFailures`), `tests/task-reassignment.test.ts`.
+Files modified: `lib/company/manager/retry.ts` (export the shared controlled `moveFailedToQueued`), `lib/company/manager/model.ts` (+`TASK_REASSIGNED` event), `lib/company/manager/service.ts` (managerStep step 1c, before the G1 retry pass), `app/api/company-tasks/[id]/route.ts` (+read-only `reassignment` decision on GET), `lib/cli/commands/company.ts` (`task show` reassignment line).
+Database: NONE — reuses existing assignment/eligibility/history; no schema, no lease/scheduler.
+API: additive read-only `reassignment` field on `GET /api/company-tasks/:id` (failed tasks). No new endpoint (Manager auto-reassigns; no force-target path).
+Behavior: on managerStep, an agent-specific safe failure with an alternate is reassigned to another fully-eligible agent (capability + wired tool) and re-run; a still-eligible agent's transient failure is NOT rotated (same-agent G1 retry); no alternate ⇒ task stays failed ("no eligible alternate agent"), no agent is created; unsafe/approval failures are never auto-reassigned.
+Tests added: 16 (pure decision ordering incl. defensive no-force; A reassign · B/U alternate must be capability+wired-tool eligible · C/E tool-equipped alternate chosen deterministically · D failed-agent excluded · F no attempt increment · G next dispatch +1 · H prior AgentRun history intact · I one TASK_REASSIGNED · J/S no alternate → failed + no Factory · K/L/N gap/config/approval never reassign · M/T provider timeout not rotated · O unsafe not reassigned · P max-attempts blocks · Q/R completed/workflow untouched · V no force/timer in source · managerStep integration/manual scenario).
+Tests run: `tsc --noEmit`; full `vitest run` (two consecutive).
+Results: typecheck clean; **1736/1736** passing.
+Known limits: no reassignment for a still-eligible agent that repeatedly fails (would need failure-history heuristics — conservative exclusion); a disabled-but-capability-holding agent is still considered eligible (registry does not exclude disabled agents); no provider/tool fallback, no scheduler/backoff, no Factory auto-create, no GC. G4.
+Rollback: code-revert the listed files. No schema to undo.
+
+---
+
 Change ID: **G2-STALE-RUNNING-RECOVERY**
 Phase: Reliability G2 (stale-running recovery for agent tasks)
 Summary: Recover agent-backed Company Tasks left `running` after a process crash/restart — mark the interrupted attempt failed (safe → retry-eligible, unsafe → review-required) WITHOUT incrementing attempt_count, integrated into managerStep before the G1 retry pass. Deterministic (in-memory active-set boundary, no wall-clock). Closes IP-4.
