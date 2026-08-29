@@ -200,6 +200,7 @@ CREATE TABLE IF NOT EXISTS company_tasks (
   last_failure_class TEXT,
   last_failure_summary TEXT,
   last_failure_at TEXT,
+  next_retry_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   started_at TEXT,
@@ -684,6 +685,8 @@ function migrateCompanyTasksTable(db: InstanceType<typeof Database>): void {
   if (!columns.has('last_failure_class')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_class TEXT');
   if (!columns.has('last_failure_summary')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_summary TEXT');
   if (!columns.has('last_failure_at')) db.exec('ALTER TABLE company_tasks ADD COLUMN last_failure_at TEXT');
+  // Reliability G4: durable next-retry time for transient backoff (additive, idempotent, nullable).
+  if (!columns.has('next_retry_at')) db.exec('ALTER TABLE company_tasks ADD COLUMN next_retry_at TEXT');
 }
 
 /** Databases created before the funnel-space build lack these columns. */
@@ -988,6 +991,7 @@ export function openDb(path: string) {
     required_capabilities: string; execution_kind: string | null; execution_ref_id: string | null;
     attempt_count: number | null; max_attempts: number | null;
     last_failure_code: string | null; last_failure_class: string | null; last_failure_summary: string | null; last_failure_at: string | null;
+    next_retry_at: string | null;
     created_at: string; updated_at: string; started_at: string | null; completed_at: string | null;
   };
   const rowToCompanyTask = (r: CompanyTaskRow): CompanyTask => ({
@@ -1010,6 +1014,7 @@ export function openDb(path: string) {
     lastFailureClass: r.last_failure_class ?? undefined,
     lastFailureSummary: r.last_failure_summary ?? undefined,
     lastFailureAt: r.last_failure_at ?? undefined,
+    nextRetryAt: r.next_retry_at ?? undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     startedAt: r.started_at ?? undefined,
@@ -1034,13 +1039,14 @@ export function openDb(path: string) {
     insert(t: CompanyTask): void {
       db.prepare(
         `INSERT OR REPLACE INTO company_tasks
-          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, execution_kind, execution_ref_id, priority, required_capabilities, attempt_count, max_attempts, last_failure_code, last_failure_class, last_failure_summary, last_failure_at, created_at, updated_at, started_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, mission_id, parent_task_id, title, objective, status, assigned_agent_id, workflow_id, run_id, execution_kind, execution_ref_id, priority, required_capabilities, attempt_count, max_attempts, last_failure_code, last_failure_class, last_failure_summary, last_failure_at, next_retry_at, created_at, updated_at, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         t.id, t.missionId, t.parentTaskId ?? null, t.title, t.objective ?? '', t.status, t.assignedAgentId ?? null,
         t.workflowId ?? null, t.runId ?? null, t.executionKind ?? null, t.executionRefId ?? null, t.priority,
         JSON.stringify(t.requiredCapabilities), t.attemptCount ?? 0, t.maxAttempts ?? 3,
         t.lastFailureCode ?? null, t.lastFailureClass ?? null, t.lastFailureSummary ?? null, t.lastFailureAt ?? null,
+        t.nextRetryAt ?? null,
         t.createdAt, t.updatedAt, t.startedAt ?? null, t.completedAt ?? null,
       );
     },

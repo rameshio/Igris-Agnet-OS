@@ -109,6 +109,7 @@ type Task = {
   attemptCount?: number; maxAttempts?: number; lastFailureCode?: string; lastFailureClass?: string; lastFailureSummary?: string;
 };
 type RetryDecision = { decision: string; class: string; reason: string; remainingAttempts: number };
+type RetryTiming = { nextRetryAt: string | null; retryDue: boolean; retryAfterMs: number };
 type ReassignmentDecision = { decision: string; reason: string; candidateCount: number; toAgentId?: string };
 
 async function taskList(ctx: Ctx): Promise<number> {
@@ -124,7 +125,7 @@ async function taskList(ctx: Ctx): Promise<number> {
 async function taskShow(ctx: Ctx): Promise<number> {
   const id = ctx.args[1];
   if (!id) return invalid(ctx, 'usage: task show <id>');
-  const res = await ctx.client.get<{ task: Task; prerequisitesSatisfied: boolean; retry: RetryDecision | null; reassignment: ReassignmentDecision | null }>(`/api/company-tasks/${id}`);
+  const res = await ctx.client.get<{ task: Task; prerequisitesSatisfied: boolean; retry: RetryDecision | null; retryTiming: RetryTiming | null; reassignment: ReassignmentDecision | null }>(`/api/company-tasks/${id}`);
   if (!res.ok) return reportApiError(ctx, res.status, res.data);
   const t = res.data.task;
   const rows: [string, string][] = [
@@ -140,6 +141,11 @@ async function taskShow(ctx: Ctx): Promise<number> {
     rows.push(['Last failure', `${t.lastFailureClass ?? 'unknown'}${t.lastFailureCode ? ` (${t.lastFailureCode})` : ''}`]);
     if (t.lastFailureSummary) rows.push(['Failure detail', t.lastFailureSummary]);
     if (res.data.retry) rows.push(['Retry', `${res.data.retry.decision} — ${res.data.retry.reason}`]);
+    // Reliability G4: retry backoff timing (automatic retries wait until due; explicit retry may go early).
+    const timing = res.data.retryTiming;
+    if (timing && timing.nextRetryAt) {
+      rows.push(['Next retry', timing.retryDue ? 'due now' : `${timing.nextRetryAt} (in ${Math.ceil(timing.retryAfterMs / 1000)}s)`]);
+    }
     if (res.data.reassignment) {
       const r = res.data.reassignment;
       const target = r.decision === 'REASSIGN_ALLOWED' && r.toAgentId ? ` → ${r.toAgentId}` : '';

@@ -108,6 +108,8 @@ export const COMPANY_EVENT_TYPES = [
   // Reliability G1 — bounded task retry (controlled failed→queued; no auto loop).
   'TASK_RETRY_QUEUED',
   'TASK_RETRY_EXHAUSTED',
+  // Reliability G4 — a transient failure was scheduled for a deterministic backoff retry.
+  'TASK_RETRY_SCHEDULED',
   // Reliability G2 — a stale-running task recovered after a process restart/crash.
   'TASK_EXECUTION_INTERRUPTED',
   // Reliability G3 — an agent-specific failure reassigned to another eligible agent.

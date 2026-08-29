@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/data';
 import { getCompanyTask, getTaskDependencies, updateCompanyTask, companyErrorInfo } from '@/lib/company/service';
-import { retryDecisionForTask } from '@/lib/company/manager/retry';
+import { retryDecisionForTask, retryTimingForTask } from '@/lib/company/manager/retry';
 import { evaluateReassignment } from '@/lib/company/manager/reassign';
 
 export const dynamic = 'force-dynamic';
@@ -21,9 +21,11 @@ export function GET(_req: Request, { params }: { params: { id: string } }) {
   const { dependsOn, satisfied } = getTaskDependencies(db, params.id);
   // Reliability G1 (additive): the retry decision for a failed task (safe metadata only).
   const retry = task.status === 'failed' ? retryDecisionForTask(db, params.id) : null;
+  // Reliability G4 (additive): derived retry timing — nextRetryAt + due + retryAfterMs (read-time).
+  const retryTiming = task.status === 'failed' ? retryTimingForTask(db, params.id) : null;
   // Reliability G3 (additive): the reassignment decision for a failed task (read-only, canonical).
   const reassignment = task.status === 'failed' ? evaluateReassignment(db, params.id) : null;
-  return NextResponse.json({ task, dependsOn, prerequisitesSatisfied: satisfied, retry, reassignment });
+  return NextResponse.json({ task, dependsOn, prerequisitesSatisfied: satisfied, retry, retryTiming, reassignment });
 }
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {

@@ -166,3 +166,41 @@ export function isAutomaticallyRetryable(input: {
 }): boolean {
   return input.classification.automaticRetryAllowed && input.attemptCount < input.maxAttempts;
 }
+
+// ── Reliability G4 — deterministic retry backoff (PURE, no clock, no randomness) ─────
+//
+// Backoff applies ONLY to genuinely TRANSIENT provider/connector conditions — the classes
+// whose fix is "wait and try the SAME target again". It never widens the auto-retryable set.
+// A process-restart interruption (EXECUTION_INTERRUPTED) is deliberately EXCLUDED: its recovery
+// is manager-driven and should run on the next tick, not after a provider-style delay.
+
+/** First-failure delay; doubles each subsequent attempt up to the cap. */
+export const RETRY_BACKOFF_BASE_MS = 15_000;
+/** Hard ceiling — this is local reliability backoff, not a job scheduler. */
+export const RETRY_BACKOFF_MAX_MS = 60_000;
+
+/** Transient classes that earn a wait-and-retry-same-target delay. */
+export const BACKOFF_ELIGIBLE_CLASSES: ReadonlySet<FailureClass> = new Set<FailureClass>([
+  'TRANSIENT_PROVIDER_ERROR',
+  'PROVIDER_RATE_LIMIT',
+  'PROVIDER_TIMEOUT',
+  'CONNECTOR_UNAVAILABLE',
+]);
+
+/**
+ * Deterministic bounded exponential backoff (no jitter). `attemptCount` = attempts already
+ * STARTED (so a task that just failed its first dispatch has attemptCount 1):
+ *   attempt 1 → 15s · attempt 2 → 30s · attempt ≥3 → 60s (cap).
+ * Returns 0 for any class that is NOT backoff-eligible, so the delay function alone encodes
+ * the whole "does this failure get a scheduled delay?" policy.
+ */
+export function computeRetryDelayMs(input: {
+  failureClass: FailureClass;
+  attemptCount: number;
+  maxAttempts: number;
+}): number {
+  if (!BACKOFF_ELIGIBLE_CLASSES.has(input.failureClass)) return 0;
+  const n = Math.max(1, input.attemptCount);
+  const delay = RETRY_BACKOFF_BASE_MS * 2 ** (n - 1);
+  return Math.min(delay, RETRY_BACKOFF_MAX_MS);
+}

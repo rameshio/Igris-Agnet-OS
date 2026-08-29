@@ -387,6 +387,14 @@ export function MissionsBoard({ initialMissions }: { initialMissions: Mission[] 
                     </div>
                   )}
 
+                  {/* Reliability G4: deterministic retry backoff. Static (no ticking timer); a page
+                      refresh updates it naturally. Explicit Retry below can still run early. */}
+                  {t.status === 'failed' && t.nextRetryAt && (
+                    <div className="mt-1 font-mono text-[9px] uppercase text-os-warn/90" title="Automatic retry is scheduled with a deterministic backoff. The Retry button can run it early.">
+                      {Date.parse(t.nextRetryAt) > Date.now() ? `retry scheduled · available ${new Date(t.nextRetryAt).toLocaleTimeString()}` : 'retry ready'}
+                    </div>
+                  )}
+
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <button onClick={() => dispatch(t.id)} disabled={busy === t.id || ['running', 'completed', 'cancelled'].includes(t.status)} className="rounded border border-os-accent/50 px-2 py-0.5 font-mono text-[9.5px] text-os-accent hover:bg-os-accent/10 disabled:opacity-40" title="Ask the Manager to dispatch this task to an agent/workflow">
                       {busy === t.id ? '…' : 'Dispatch'}

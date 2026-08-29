@@ -36,7 +36,7 @@ export type ManagerStepResult = {
  * One bounded orchestration tick. Returns the dispatched outcomes + a fresh report.
  * Deterministic where possible; dispatch order follows task creation order.
  */
-export async function managerStep(db: FounderDb, missionId: string, opts: { maxSteps?: number } = {}): Promise<ManagerStepResult> {
+export async function managerStep(db: FounderDb, missionId: string, opts: { maxSteps?: number; now?: Date } = {}): Promise<ManagerStepResult> {
   const mission = getMission(db, missionId);
   if (!mission) throw new CompanyError('mission not found', 404);
   const maxSteps = Math.max(1, Math.min(opts.maxSteps ?? MANAGER_STEP_DEFAULT_MAX, 10));
@@ -79,8 +79,9 @@ export async function managerStep(db: FounderDb, missionId: string, opts: { maxS
   // 2b. Reliability G1: auto-retry AUTOMATICALLY-retryable failed tasks (transient
   // provider/timeout/rate-limit) with attempts remaining — controlled failed→queued,
   // so the dispatch loop below re-runs them. Non-retryable failures (missing config,
-  // capability gap, invalid input, unknown) are NEVER auto-retried and never loop.
-  promoteRetryableFailures(db, missionId);
+  // capability gap, invalid input, unknown) are NEVER auto-retried and never loop. Reliability
+  // G4: a scheduled backoff is honoured — a not-yet-due transient failure waits for a later tick.
+  promoteRetryableFailures(db, missionId, { now: opts.now });
 
   // 3. Dispatch the next actionable tasks, bounded by maxSteps.
   const dispatched: DispatchResult[] = [];

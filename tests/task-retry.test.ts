@@ -122,9 +122,14 @@ describe('retry decisions + execution (E, F, H, I, J, K, L, N)', () => {
     expect(t.attemptCount).toBe(1);
     expect(t.lastFailureClass).toBe('PROVIDER_TIMEOUT');
 
-    const promoted = promoteRetryableFailures(db, missionId); // manager auto-retry pass
+    // G4: a transient failure is scheduled for a deterministic backoff — NOT promoted before due.
+    expect(t.nextRetryAt).toBeTruthy();
+    expect(promoteRetryableFailures(db, missionId)).not.toContain(taskId); // real clock → not yet due
+    const due = new Date(Date.parse(getCompanyTask(db, taskId)!.nextRetryAt!) + 1000);
+    const promoted = promoteRetryableFailures(db, missionId, { now: due }); // manager auto-retry pass, now due
     expect(promoted).toContain(taskId);
     expect(getCompanyTask(db, taskId)!.status).toBe('queued'); // controlled failed→queued
+    expect(getCompanyTask(db, taskId)!.nextRetryAt).toBeUndefined(); // cleared on queue
     expect(db.companyEvents.forTask(taskId).some((e) => e.type === 'TASK_RETRY_QUEUED')).toBe(true);
 
     // Re-dispatch (now with a healthy runtime) completes and increments the attempt to 2.
@@ -153,7 +158,8 @@ describe('retry decisions + execution (E, F, H, I, J, K, L, N)', () => {
     db.companyTasks.insert({ ...getCompanyTask(db, taskId)!, maxAttempts: 2 });
 
     await dispatchTask(db, taskId, { runtime: failingRuntime('network_error') }); // attempt 1
-    expect(promoteRetryableFailures(db, missionId)).toContain(taskId);
+    const due1 = new Date(Date.parse(getCompanyTask(db, taskId)!.nextRetryAt!) + 1000);
+    expect(promoteRetryableFailures(db, missionId, { now: due1 })).toContain(taskId); // due → promoted
     await dispatchTask(db, taskId, { runtime: failingRuntime('network_error') }); // attempt 2
     const promoted = promoteRetryableFailures(db, missionId); // budget spent
     expect(promoted).toHaveLength(0);

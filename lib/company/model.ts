@@ -77,6 +77,12 @@ export type CompanyTask = {
   lastFailureClass?: string;
   lastFailureSummary?: string;
   lastFailureAt?: string;
+  // Reliability G4 — durable next-retry time for a TRANSIENT auto-retryable failure.
+  // `undefined`/NULL = no scheduled automatic-retry delay (the default, and the value
+  // for non-auto-retryable, exhausted, completed, or reassigned tasks). A timestamp =
+  // the task is auto-retryable but must NOT be promoted before this instant (deterministic
+  // bounded backoff). It never gates an EXPLICIT operator retry and never changes attemptCount.
+  nextRetryAt?: string;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
